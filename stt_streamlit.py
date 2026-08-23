@@ -10,7 +10,12 @@ from voice_component import voice_component
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
-LANGUAGES = {"English": "en", "Hindi": "hi", "Kannada": "kn", "Assamese": "as"}
+LANGUAGES = {
+    "English":  "en-IN",
+    "Hindi":    "hi-IN",
+    "Kannada":  "kn-IN",
+    "Assamese": None,
+}
 
 
 def clean_answer(text):
@@ -26,10 +31,9 @@ def clean_answer(text):
 
 if "user_id" not in st.session_state:
     st.session_state.user_id = str(uuid.uuid4())
-if "conversation_id" not in st.session_state:
-    st.session_state.conversation_id = None
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# Per-language conversation storage: {lang: {messages, conversation_id}}
+if "lang_convos" not in st.session_state:
+    st.session_state.lang_convos = {}
 if "page" not in st.session_state:
     st.session_state.page = "Bot"
 
@@ -53,13 +57,22 @@ with st.sidebar:
 # Language persisted in session so all pages share it
 if "selected_language" not in st.session_state:
     st.session_state.selected_language = "English"
+if "last_language" not in st.session_state:
+    st.session_state.last_language = st.session_state.selected_language
+
+def _convo(lang: str) -> dict:
+    """Get or create the conversation bucket for a language."""
+    if lang not in st.session_state.lang_convos:
+        st.session_state.lang_convos[lang] = {"messages": [], "conversation_id": None}
+    return st.session_state.lang_convos[lang]
 
 
 def get_headers():
-    return {
-        "X-User-Id": st.session_state.user_id,
-        "X-Language": LANGUAGES[st.session_state.selected_language],
-    }
+    lang_code = LANGUAGES[st.session_state.selected_language]
+    headers = {"X-User-Id": st.session_state.user_id}
+    if lang_code:
+        headers["X-Language"] = lang_code
+    return headers
 
 
 page = st.session_state.page
@@ -70,9 +83,8 @@ if page == "\U0001f916 Bot":
     with _title_col:
         st.title("\U0001f916 Bot")
     with _clear_col:
-        if st.session_state.messages and st.button("\U0001f5d1\ufe0f Clear", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state.conversation_id = None
+        if _convo(st.session_state.selected_language)["messages"] and st.button("\U0001f5d1\ufe0f Clear", use_container_width=True):
+            st.session_state.lang_convos[st.session_state.selected_language] = {"messages": [], "conversation_id": None}
             st.rerun()
     with _lang_col:
         st.session_state.selected_language = st.selectbox(
@@ -80,6 +92,10 @@ if page == "\U0001f916 Bot":
             index=list(LANGUAGES.keys()).index(st.session_state.selected_language),
             label_visibility="collapsed",
         )
+    # Save current language state then switch — no data lost
+    if st.session_state.selected_language != st.session_state.last_language:
+        st.session_state.last_language = st.session_state.selected_language
+        st.rerun()
 
     # Build the full chat history as one scrollable HTML block
     def _bubble(msg):
@@ -105,7 +121,9 @@ if page == "\U0001f916 Bot":
             f'max-width:70%;word-wrap:break-word">{text}{src_html}</div></div>'
         )
 
-    bubbles = "".join(_bubble(m) for m in st.session_state.messages)
+    _c = _convo(st.session_state.selected_language)
+
+    bubbles = "".join(_bubble(m) for m in _c["messages"])
     st.markdown(
         f'<div id="chat-scroll" style="height:calc(100vh - 320px);overflow-y:auto;border:1px solid #e0e0e0;'
         f'border-radius:8px;padding:12px;background:#fff">{bubbles}'
@@ -115,7 +133,7 @@ if page == "\U0001f916 Bot":
     )
 
     if prompt := st.chat_input(f"Ask a question in {st.session_state.selected_language}..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        _c["messages"].append({"role": "user", "content": prompt})
         with st.spinner("Thinking..."):
             try:
                 resp = requests.post(
@@ -123,26 +141,26 @@ if page == "\U0001f916 Bot":
                     headers=get_headers(),
                     json={
                         "message": prompt,
-                        "conversation_id": st.session_state.conversation_id,
+                        "conversation_id": _c["conversation_id"],
                     },
                     timeout=180,
                 )
                 if resp.ok:
                     data = resp.json()
-                    st.session_state.conversation_id = str(data.get("conversation_id", ""))
+                    _c["conversation_id"] = str(data.get("conversation_id", ""))
                     answer = clean_answer(data.get("answer", ""))
                     sources = data.get("sources", [])
-                    st.session_state.messages.append(
+                    _c["messages"].append(
                         {"role": "assistant", "content": answer, "sources": sources}
                     )
                 else:
-                    st.session_state.messages.append(
+                    _c["messages"].append(
                         {"role": "assistant",
                          "content": f"Request failed ({resp.status_code})\n```\n{resp.text}\n```",
                          "sources": []}
                     )
             except Exception as e:
-                st.session_state.messages.append(
+                _c["messages"].append(
                     {"role": "assistant", "content": f"\u274c {e}", "sources": []}
                 )
         st.rerun()

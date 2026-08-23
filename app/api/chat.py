@@ -6,7 +6,7 @@ import time
 import uuid
 import base64
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -160,6 +160,7 @@ async def chat_text(
     user_id: uuid.UUID = Depends(get_current_user_id),
     request_id: str = Depends(get_request_id_dep),
     db: AsyncSession = Depends(get_db),
+    x_language: str | None = Header(default=None),
 ):
     started = time.perf_counter()
     conv = await _get_or_create_conversation(
@@ -171,9 +172,10 @@ async def chat_text(
         conversation_id=conv.id, request_id=request_id,
     )
     history = await _load_history(db, conv.id, settings.conversation_memory_turns)
+    query_lang = x_language if x_language else detect_query_language(body.message)
     messages = build_messages(
         body.message, chunks, history,
-        query_language=detect_query_language(body.message),
+        query_language=query_lang,
     )
 
     answer = await sarvam_client.chat_completion(
@@ -201,6 +203,7 @@ async def chat_text_stream(
     body: ChatTextRequest,
     user_id: uuid.UUID = Depends(get_current_user_id),
     request_id: str = Depends(get_request_id_dep),
+    x_language: str | None = Header(default=None),
 ):
     async def event_gen():
         started = time.perf_counter()
@@ -223,7 +226,7 @@ async def chat_text_stream(
                 )
                 messages = build_messages(
                     body.message, chunks, history,
-                    query_language=detect_query_language(body.message),
+                    query_language=x_language if x_language else detect_query_language(body.message),
                 )
 
                 answer_parts: list[str] = []

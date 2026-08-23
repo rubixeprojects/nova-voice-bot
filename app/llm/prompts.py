@@ -5,23 +5,15 @@ from app.cleaner.unicode import detect_query_language
 from app.retrieval.types import RetrievedChunk
 
 SYSTEM_PROMPT = (
-    "You are a helpful multilingual voice assistant.\n"
+    "You are a helpful multilingual assistant.\n"
     "1. Answer naturally, conversationally, and concisely.\n"
-    "2. ALWAYS answer in the SAME language as the user's question.\n"
-    "3. The supported languages for this voice assistant are English and Kannada.\n"
-    "4. If the user's question is in English, answer in English.\n"
-    "5. If the user's question is in Kannada, answer in Kannada.\n"
-    "6. NEVER translate the user's question into another language before answering.\n"
-    "7. NEVER default to Assamese.\n"
-    "8. For casual conversation, greetings, small talk, and general questions "
+    "2. For casual conversation, greetings, and general questions "
     "that do not require documents, answer directly using your general knowledge.\n"
-    "9. Keep voice answers short and conversational. Normally answer in 1-3 sentences.\n"
-    "10. If the user asks for an explanation, give a concise explanation using short "
-    "sentences or a few brief points. Do not produce long paragraphs unless the user "
-    "explicitly asks for a detailed answer.\n"
-    "11. Do not provide analysis or reasoning unless requested.\n"
-    "12. Do not use [S#] citations for casual conversation. For document-based "
-    "answers, cite relevant sources with [S#] markers."
+    "3. Keep answers short and conversational — normally 1-3 sentences.\n"
+    "4. Give concise explanations with short sentences unless the user asks for detail.\n"
+    "5. Do not provide analysis or reasoning unless requested.\n"
+    "6. For document-based answers, cite relevant sources with [S#] markers. "
+    "Do not use [S#] citations for casual conversation."
 )
 
 def build_context_block(chunks: list[RetrievedChunk]) -> str:
@@ -38,16 +30,15 @@ def build_context_block(chunks: list[RetrievedChunk]) -> str:
 def _build_user_turn(
     query: str,
     context: str,
-    query_language: str,
+    language_name: str,
 ) -> str:
     return (
         f"Context:\n{context}\n\n"
         "----\n"
         f"User question: {query}\n\n"
-        "Answer the user's question appropriately. "
-        "If relevant document context is provided, use it to answer accurately "
-        "and cite the relevant sources with [S#] markers. "
-        "Answer in the detected user language."
+        f"IMPORTANT: Your response MUST be written entirely in {language_name}. "
+        "Do not use any other language regardless of the language of the context above. "
+        "If relevant context is provided, use it to answer accurately and cite sources with [S#] markers."
     )
 
 
@@ -61,20 +52,28 @@ def build_messages(
     """Assemble chat messages using the STT-detected language."""
     lang = query_language or detect_query_language(query)
 
+    # Accept both short codes (from UI/detect) and Sarvam full codes (from STT)
     language_name = {
-        "en-IN": "English",
-        "hi-IN": "Hindi",
-        "kn-IN": "Kannada",
-        "as-IN": "Assamese",
-        "ta-IN": "Tamil",
-        "te-IN": "Telugu",
-    }.get(lang, "the same language as the user")
+        "en": "English",   "en-IN": "English",
+        "hi": "Hindi",     "hi-IN": "Hindi",
+        "kn": "Kannada",   "kn-IN": "Kannada",
+        "bn": "Bengali",   "bn-IN": "Bengali",
+        "ta": "Tamil",     "ta-IN": "Tamil",
+        "te": "Telugu",    "te-IN": "Telugu",
+        "ml": "Malayalam", "ml-IN": "Malayalam",
+        "mr": "Marathi",   "mr-IN": "Marathi",
+        "gu": "Gujarati",  "gu-IN": "Gujarati",
+        "pa": "Punjabi",   "pa-IN": "Punjabi",
+        "od": "Odia",      "od-IN": "Odia",
+        "as": "Assamese",  "as-IN": "Assamese",
+        "indic": "the same Indic language as the user's question",
+    }.get(lang, "English")
 
     system_prompt = (
         SYSTEM_PROMPT
-        + f"\n\nIMPORTANT: The detected user language is {language_name}. "
-        f"You MUST answer in {language_name}. "
-        "Do not translate the answer into Assamese unless Assamese is the detected language."
+        + f"\n\nCRITICAL LANGUAGE RULE: You MUST respond ONLY in {language_name}. "
+        f"Regardless of the language of the retrieved context, your answer must be in {language_name}. "
+        "Do NOT switch languages mid-response."
     )
 
     messages: list[dict] = [
@@ -89,7 +88,7 @@ def build_messages(
     messages.append(
         {
             "role": "user",
-            "content": _build_user_turn(query, context, lang),
+            "content": _build_user_turn(query, context, language_name),
         }
     )
 
