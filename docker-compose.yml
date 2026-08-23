@@ -13,18 +13,14 @@
 # Docker Desktop memory >= 4 GB is usually enough when HF_TOKEN is configured.
 # Shared env for api/worker/migrate (override via `.env` if present).
 x-app-env: &app-env
-  POSTGRES_URL: postgresql+psycopg://postgres:postgres@postgres:5432/assamese_rag
-  QDRANT_URL: http://qdrant:6333
-  OPENSEARCH_URL: http://opensearch:9200
-  REDIS_URL: redis://redis:6379/0
-  S3_ENDPOINT_URL: http://minio:9000
-  S3_BUCKET: assamese-rag
-  S3_ACCESS_KEY: minioadmin
-  S3_SECRET_KEY: minioadmin
+  POSTGRES_URL: postgresql+psycopg://postgres:postgres@localhost:5432/assamese_rag
+  QDRANT_URL: http://localhost:6333
+  OPENSEARCH_URL: http://localhost:9200
+  REDIS_URL: redis://localhost:6379/0
 
 services:
   postgres:
-    image: postgres:16
+    image: docker.io/postgres:16
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -38,12 +34,12 @@ services:
       retries: 10
 
   qdrant:
-    image: qdrant/qdrant:v1.11.3
+    image: docker.io/qdrant/qdrant:v1.11.3
     ports: ["6333:6333", "6334:6334"]
     volumes: ["qdrantdata:/qdrant/storage"]
 
   opensearch:
-    image: opensearchproject/opensearch:2.15.0
+    image: docker.io/opensearchproject/opensearch:2.15.0
     environment:
       - discovery.type=single-node
       - bootstrap.memory_lock=true
@@ -67,30 +63,13 @@ services:
       retries: 20
 
   redis:
-    image: redis:7
+    image: docker.io/redis:7
     ports: ["6379:6379"]
-
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports: ["9000:9000", "9001:9001"]
-    volumes: ["miniodata:/data"]
-
-  minio-init:
-    image: minio/mc:latest
-    depends_on: [minio]
-    entrypoint: >
-      /bin/sh -c "
-      until (mc alias set local http://minio:9000 minioadmin minioadmin) do sleep 2; done;
-      mc mb -p local/assamese-rag || true;
-      exit 0"
 
   migrate:
     build: .
     command: alembic upgrade head
+    network_mode: host
     environment: *app-env
     env_file:
       - path: .env
@@ -102,22 +81,18 @@ services:
   api:
     build: .
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    network_mode: host
     environment: *app-env
     env_file:
       - path: .env
         required: false
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     volumes:
       - .:/app
-    ports: ["8000:8000"]
     depends_on:
       postgres: { condition: service_healthy }
       opensearch: { condition: service_healthy }
       qdrant: { condition: service_started }
       redis: { condition: service_started }
-      minio: { condition: service_started }
 
   worker:
     build: .
@@ -126,13 +101,11 @@ services:
       --loglevel=INFO
       --concurrency=1
       --max-memory-per-child=1500000
+    network_mode: host
     environment: *app-env
     env_file:
       - path: .env
         required: false
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     volumes:
       - .:/app
     # Worker stays light when HF_TOKEN handles embeddings; limit avoids runaway RAM.
@@ -143,10 +116,22 @@ services:
       opensearch: { condition: service_healthy }
       qdrant: { condition: service_started }
       redis: { condition: service_started }
-      minio: { condition: service_started }
+
+  ui:
+    image: docker.io/python:3.11-slim
+    command: >
+      bash -c "pip install --quiet streamlit audio-recorder-streamlit &&
+               streamlit run stt_streamlit.py --server.port 8503 --server.address 0.0.0.0"
+    network_mode: host
+    environment:
+      API_BASE_URL: http://localhost:8000
+    volumes:
+      - .:/app
+    working_dir: /app
+    depends_on:
+      - api
 
 volumes:
   pgdata:
   qdrantdata:
   osdata:
-  miniodata:

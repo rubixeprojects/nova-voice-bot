@@ -17,8 +17,6 @@ from app.core.clients import ensure_opensearch_index, ensure_qdrant_collection
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
-from app.core.storage import ensure_bucket
-
 configure_logging()
 log = get_logger(__name__)
 
@@ -28,7 +26,6 @@ async def lifespan(app: FastAPI):
     log.info("app.startup", env=settings.app_env)
     # Best-effort: don't crash the API if a backing store is briefly down.
     for name, fn in (
-        ("s3", ensure_bucket),
         ("qdrant", ensure_qdrant_collection),
         ("opensearch", ensure_opensearch_index),
     ):

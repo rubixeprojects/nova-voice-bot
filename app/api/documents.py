@@ -11,7 +11,6 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.deps import get_current_user_id, get_request_id_dep
 from app.core.logging import get_logger
-from app.core.storage import put_bytes
 from app.models import Document
 from app.retrieval import bm25, dense
 from app.schemas.documents import (
@@ -67,16 +66,13 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Empty file")
 
     document_id = uuid.uuid4()
-    s3_key = f"documents/{user_id}/{document_id}/{file.filename}"
-    put_bytes(s3_key, data, file.content_type or "application/pdf")
 
     doc = Document(
         id=document_id,
         user_id=user_id,
         original_filename=file.filename or "document.pdf",
         display_name=file.filename or "document.pdf",
-        s3_bucket=settings.s3_bucket,
-        s3_key=s3_key,
+        raw_pdf=data,
         mime_type=file.content_type or "application/pdf",
         file_size_bytes=len(data),
         status="uploaded",

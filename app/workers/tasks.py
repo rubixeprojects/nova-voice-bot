@@ -11,7 +11,6 @@ from app.core.context import new_job_request_id, set_request_id, set_user_id
 from app.core.db import get_sync_db
 from app.core.logging import get_logger
 from app.core.stage_logger import stage
-from app.core.storage import get_bytes
 from app.ingestion.embedding import embed_texts, release_tokenizer
 from app.models import Chunk, Document
 from app.pipeline.ingest import run_ingestion_pipeline
@@ -76,7 +75,7 @@ def ingest_document(
         set_user_id(str(doc.user_id))
 
         try:
-            raw = get_bytes(doc.s3_key)
+            raw = doc.raw_pdf
 
             _set_status(db, doc, "ocr_in_progress")
             with stage(db, "parse", component="document_router", document_id=doc_uuid,

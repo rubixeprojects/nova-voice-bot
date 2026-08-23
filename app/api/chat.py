@@ -15,7 +15,6 @@ from app.core.config import settings
 from app.core.db import AsyncSessionLocal, get_db
 from app.core.deps import get_current_user_id, get_request_id_dep
 from app.core.logging import get_logger
-from app.core.storage import put_bytes
 from app.llm import sarvam_client
 from app.cleaner.unicode import detect_query_language
 from app.llm.prompts import build_messages
@@ -282,9 +281,8 @@ async def chat_voice(
 
     doc_ids = _parse_doc_ids(document_ids)
 
-    # Persist raw audio to S3 (never logged raw â€” spec Â§6 privacy rule).
-    audio_key = f"voice/{user_id}/{uuid.uuid4()}/{file.filename or 'audio.wav'}"
-    put_bytes(audio_key, audio, file.content_type or "audio/wav")
+    # Raw audio is not persisted (MinIO removed).
+    audio_key = None
 
     conv = await _get_or_create_conversation(db, conversation_id, user_id, "Voice chat")
 
@@ -440,15 +438,7 @@ async def chat_voice_stream(
 
         async with AsyncSessionLocal() as db:
             try:
-                audio_key = (
-                    f"voice/{user_id}/{uuid.uuid4()}/{filename}"
-                )
-
-                put_bytes(
-                    audio_key,
-                    audio,
-                    content_type,
-                )
+                audio_key = None
 
                 conv = await _get_or_create_conversation(
                     db,

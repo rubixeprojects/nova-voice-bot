@@ -23,7 +23,7 @@ qdrant-client==1.11.3
 opensearch-py==2.7.1
 
 # --- Object storage ---
-boto3==1.35.36
+# (removed — raw PDFs are stored in PostgreSQL as bytea)
 
 # --- ML / Embeddings / OCR ---
 # Embeddings + reranker: HF Inference API when HF_TOKEN is set (see embedding.py, rerank.py).

@@ -36,14 +36,6 @@ class Settings(BaseSettings):
     # --- Redis / Celery ---
     redis_url: str = "redis://localhost:6379/0"
 
-    # --- S3 ---
-    s3_endpoint_url: str = "http://localhost:9000"
-    s3_bucket: str = "assamese-rag"
-    s3_access_key: str = "minioadmin"
-    s3_secret_key: str = "minioadmin"
-    s3_region: str = "us-east-1"
-    s3_hard_delete_on_doc_delete: bool = False
-
     # --- Embeddings / reranker ---
     hf_token: str = ""
     bge_m3_model_path_or_endpoint: str = "BAAI/bge-m3"

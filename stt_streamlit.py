@@ -1,4 +1,5 @@
 import io
+import os
 import re
 import uuid
 import base64
@@ -7,316 +8,152 @@ import streamlit as st
 from audio_recorder_streamlit import audio_recorder
 from voice_component import voice_component
 
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+
+LANGUAGES = {"English": "en", "Hindi": "hi", "Kannada": "kn", "Assamese": "as"}
+
+
 def clean_answer(text):
     if not text:
         return ""
-
-    # Remove source citations such as [s1], [s1, s2], or standalone s1.
     text = re.sub(r"\[\s*s\d+(?:\s*,\s*s\d+)*\s*\]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(?<!\w)s\d+(?!\w)", "", text, flags=re.IGNORECASE)
-
-    # Remove leftover empty citation brackets such as [] or [   ].
     text = re.sub(r"\[\s*\]", "", text)
-
-    # Remove extra spaces created after removing citations.
     text = re.sub(r"[ \t]{2,}", " ", text)
-
-    # Clean spaces before punctuation
     text = re.sub(r"\s+([,.!?;:])", r"\1", text)
-
     return text.strip()
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
 
-API_BASE_URL = "http://localhost:8000"
+if "user_id" not in st.session_state:
+    st.session_state.user_id = str(uuid.uuid4())
+if "conversation_id" not in st.session_state:
+    st.session_state.conversation_id = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "page" not in st.session_state:
+    st.session_state.page = "Bot"
 
-LANGUAGES = {
-    "English": "en-IN",
-    "Hindi": "hi-IN",
-    "Kannada": "kn-IN",
-    "Assamese": "as-IN",
-}
+st.set_page_config(page_title="Multilingual RAG Assistant", page_icon="\U0001f916", layout="wide")
 
+st.markdown("""<style>
+html, body { overflow: hidden !important; height: 100% !important; }
+[data-testid="stAppViewContainer"] { overflow: hidden !important; height: 100vh !important; }
+[data-testid="stMain"] { overflow: hidden !important; }
+.main .block-container { overflow: hidden !important; padding-bottom: 0 !important; padding-top: 1rem !important; }
+[data-testid="stBottom"] { padding-top: 0 !important; }
+</style>""", unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------------
-# Page
-# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.title("\U0001f916 RAG Assistant")
+    for _p in ["\U0001f916 Bot", "\U0001f3a4 Voice AI", "\U0001f680 Intelligent Voice AI", "\U0001f4c4 Upload Document"]:
+        if st.button(_p, use_container_width=True, type="primary" if st.session_state.page == _p else "secondary"):
+            st.session_state.page = _p
+            st.rerun()
 
-st.set_page_config(
-    page_title="Multilingual RAG Voice Assistant",
-    page_icon="🎤",
-    layout="wide",
-)
+# Language persisted in session so all pages share it
+if "selected_language" not in st.session_state:
+    st.session_state.selected_language = "English"
 
-
-# ---------------------------------------------------------------------------
-# Language Selection
-# ---------------------------------------------------------------------------
-
-LANGUAGES = {
-    "English": "en",
-    "Hindi": "hi",
-    "Kannada": "kn",
-    "Assamese": "as",
-}
-
-if "language" not in st.session_state:
-    st.session_state["language"] = "English"
-
-st.subheader("🌐 Select Language")
-
-selected_language = st.selectbox(
-    "Choose the language for your conversation",
-    options=list(LANGUAGES.keys()),
-    index=list(LANGUAGES.keys()).index(st.session_state["language"]),
-    key="language_selector",
-)
-
-selected_code = LANGUAGES[selected_language]
-
-# Detect language change
-if st.session_state["language"] != selected_language:
-
-    st.session_state["language"] = selected_language
-
-    # Clear previous conversation/results when language changes
-    keys_to_clear = [
-        "transcript",
-        "stt_data",
-        "voice_result",
-        "text_answer",
-    ]
-
-    for key in keys_to_clear:
-        st.session_state.pop(key, None)
-
-    st.rerun()
-
-
-# ===========================================================================
-# SELECTED LANGUAGE
-# ===========================================================================
-selected_language = st.session_state.get("language", "English")
-language_code = LANGUAGES[selected_language]
-
-
-# ---------------------------------------------------------------------------
-# Header
-# ---------------------------------------------------------------------------
-
-st.title("🎤 Multilingual RAG Voice Assistant")
-
-st.caption(
-    f"Current language: **{selected_language}** ({language_code})"
-)
-
-
-# ---------------------------------------------------------------------------
-# Authentication
-# ---------------------------------------------------------------------------
-
-st.sidebar.header("Configuration")
-
-user_id = st.sidebar.text_input(
-    "X-User-Id",
-    value="550e8400-e29b-41d4-a716-446655440000",
-)
-
-request_id = st.sidebar.text_input(
-    "X-Request-Id",
-    value=str(uuid.uuid4()),
-)
-
-st.sidebar.write("API:")
-st.sidebar.code(API_BASE_URL)
-
-st.sidebar.divider()
-
-st.sidebar.write("Selected Language:")
-st.sidebar.success(
-    f"{selected_language} ({language_code})"
-)
-
-if st.sidebar.button("🌐 Change Language"):
-    st.session_state["language"] = None
-
-    # Clear previous language-specific results
-    for key in [
-        "transcript",
-        "stt_data",
-        "voice_result",
-    ]:
-        st.session_state.pop(key, None)
-
-    st.rerun()
-
-
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
 
 def get_headers():
     return {
-        "X-User-Id": user_id,
-        "X-Request-Id": request_id,
-
-        # Selected language
-        "X-Language": language_code,
+        "X-User-Id": st.session_state.user_id,
+        "X-Language": LANGUAGES[st.session_state.selected_language],
     }
 
 
-# ---------------------------------------------------------------------------
-# Tabs
-# ---------------------------------------------------------------------------
+page = st.session_state.page
 
-tab_upload, tab_continuous_voice, tab_voice, tab_text = st.tabs(
-    [
-        "📄 Upload Document",
-        "🚀 Intelligent Voice AI",
-        "🎤 Voice AI",
-        "💬 Text Chat",
-    ]
-)
-
-
-# ===========================================================================
-# DOCUMENT UPLOAD TAB
-# ===========================================================================
-
-with tab_upload:
-
-    st.header("📄 Upload Document")
-
-    st.write(
-        "Upload a PDF document. The existing backend ingestion pipeline "
-        "will handle parsing, chunking, embeddings, and indexing."
-    )
-
-    uploaded_file = st.file_uploader(
-        "Choose a PDF file",
-        type=["pdf"],
-    )
-
-    if uploaded_file:
-
-        st.success(
-            f"Selected: {uploaded_file.name}"
+# ── Bot ──────────────────────────────────────────────────────────────────────
+if page == "\U0001f916 Bot":
+    _title_col, _clear_col, _lang_col = st.columns([5, 1, 1], vertical_alignment="bottom")
+    with _title_col:
+        st.title("\U0001f916 Bot")
+    with _clear_col:
+        if st.session_state.messages and st.button("\U0001f5d1\ufe0f Clear", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.conversation_id = None
+            st.rerun()
+    with _lang_col:
+        st.session_state.selected_language = st.selectbox(
+            "Language", options=list(LANGUAGES.keys()),
+            index=list(LANGUAGES.keys()).index(st.session_state.selected_language),
+            label_visibility="collapsed",
         )
 
-        st.write(
-            f"File size: {uploaded_file.size:,} bytes"
+    # Build the full chat history as one scrollable HTML block
+    def _bubble(msg):
+        text = msg["content"]
+        if msg["role"] == "user":
+            return (
+                f'<div style="display:flex;justify-content:flex-end;margin:6px 0">'
+                f'<div style="background:#DCF8C6;padding:10px 14px;border-radius:16px 16px 4px 16px;'
+                f'max-width:70%;word-wrap:break-word">{text}</div></div>'
+            )
+        srcs = msg.get("sources", [])
+        src_html = ""
+        if srcs:
+            items = "".join(
+                f'<div style="font-size:0.78em;color:#555;margin-top:4px">'
+                f'📄 {s.get("document_name","")} p.{s.get("page_number","?")}</div>'
+                for s in srcs
+            )
+            src_html = f'<details style="margin-top:6px"><summary style="font-size:0.8em;cursor:pointer">📚 {len(srcs)} source(s)</summary>{items}</details>'
+        return (
+            f'<div style="display:flex;justify-content:flex-start;margin:6px 0">'
+            f'<div style="background:#F0F0F0;padding:10px 14px;border-radius:16px 16px 16px 4px;'
+            f'max-width:70%;word-wrap:break-word">{text}{src_html}</div></div>'
         )
 
-        if st.button(
-            "📤 Upload & Ingest",
-            type="primary",
-            key="upload_document_button",
-        ):
-
-            with st.spinner("Uploading and starting ingestion..."):
-
-                try:
-
-                    files = {
-                        "file": (
-                            uploaded_file.name,
-                            uploaded_file.getvalue(),
-                            "application/pdf",
-                        )
-                    }
-
-                    response = requests.post(
-                        f"{API_BASE_URL}/api/v1/documents",
-                        headers=get_headers(),
-                        files=files,
-                        timeout=300,
-                    )
-
-                    if response.ok:
-
-                        data = response.json()
-
-                        st.success(
-                            "✅ Document uploaded successfully!"
-                        )
-
-                        st.subheader("Ingestion Response")
-
-                        st.json(data)
-
-                    else:
-
-                        st.error(
-                            f"❌ Upload failed ({response.status_code})"
-                        )
-
-                        st.code(response.text)
-
-                except Exception as e:
-
-                    st.error(
-                        f"❌ Request failed: {e}"
-                    )
-            # ---------------------------------------------------------------
-            # We will connect your existing Swagger ingestion endpoint here.
-            #
-            # DO NOT change the backend ingestion logic.
-            # ---------------------------------------------------------------
-
-            # Example structure:
-            #
-            # files = {
-            #     "file": (
-            #         uploaded_file.name,
-            #         uploaded_file.getvalue(),
-            #         "application/pdf",
-            #     )
-            # }
-            #
-            # response = requests.post(
-            #     f"{API_BASE_URL}/YOUR_INGEST_ENDPOINT",
-            #     headers=get_headers(),
-            #     files=files,
-            #     timeout=300,
-            # )
-
-
-# ===========================================================================
-# INTELLIGENT VOICE AI TAB
-# ===========================================================================
-
-with tab_continuous_voice:
-    st.header("🚀 Intelligent Voice AI")
-    st.write(
-        "This mode supports continuous listening and interruption (barge-in). "
-        "When the assistant is speaking, you can start talking to interrupt it."
-    )
-    
-    # Render the custom voice component
-    voice_component()
-
-
-# ===========================================================================
-# VOICE AI TAB
-# ===========================================================================
-
-with tab_voice:
-
-    st.header("Voice AI")
-
-    st.write(
-        f"Record your question in **{selected_language}**."
+    bubbles = "".join(_bubble(m) for m in st.session_state.messages)
+    st.markdown(
+        f'<div id="chat-scroll" style="height:calc(100vh - 320px);overflow-y:auto;border:1px solid #e0e0e0;'
+        f'border-radius:8px;padding:12px;background:#fff">{bubbles}'
+        f'</div>'
+        f'<script>var s=document.getElementById("chat-scroll");s.scrollTop=s.scrollHeight;</script>',
+        unsafe_allow_html=True,
     )
 
-    # -----------------------------------------------------------------------
-    # Recorder
-    # -----------------------------------------------------------------------
+    if prompt := st.chat_input(f"Ask a question in {st.session_state.selected_language}..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.spinner("Thinking..."):
+            try:
+                resp = requests.post(
+                    f"{API_BASE_URL}/api/v1/chat/text",
+                    headers=get_headers(),
+                    json={
+                        "message": prompt,
+                        "conversation_id": st.session_state.conversation_id,
+                    },
+                    timeout=180,
+                )
+                if resp.ok:
+                    data = resp.json()
+                    st.session_state.conversation_id = str(data.get("conversation_id", ""))
+                    answer = clean_answer(data.get("answer", ""))
+                    sources = data.get("sources", [])
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": answer, "sources": sources}
+                    )
+                else:
+                    st.session_state.messages.append(
+                        {"role": "assistant",
+                         "content": f"Request failed ({resp.status_code})\n```\n{resp.text}\n```",
+                         "sources": []}
+                    )
+            except Exception as e:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"\u274c {e}", "sources": []}
+                )
+        st.rerun()
+
+# ── Voice AI ──────────────────────────────────────────────────────────────────
+elif page == "\U0001f3a4 Voice AI":
+    st.title("\U0001f3a4 Voice AI")
+    st.write(f"Record your question in **{st.session_state.selected_language}**.")
 
     audio_bytes = audio_recorder(
         text="Click to record",
-        # Keep recording through normal pauses; click the mic to stop it.
         pause_threshold=3600,
         recording_color="#ff4b4b",
         neutral_color="#6c757d",
@@ -326,87 +163,31 @@ with tab_voice:
     )
 
     if audio_bytes:
+        st.success(f"Recording captured \u2014 {len(audio_bytes):,} bytes")
+        st.audio(audio_bytes, format="audio/wav")
 
-        st.success(
-            f"Recording captured — {len(audio_bytes):,} bytes"
-        )
-
-        # -------------------------------------------------------------------
-        # Play recording
-        # -------------------------------------------------------------------
-
-        st.subheader("Your Recording")
-
-        st.audio(
-            audio_bytes,
-            format="audio/wav",
-        )
-
-        # -------------------------------------------------------------------
-        # STT
-        # -------------------------------------------------------------------
-
-        st.subheader("1️⃣ Speech-to-Text")
-
-        if st.button(
-            "Transcribe Audio",
-            key="transcribe_button",
-            type="primary",
-        ):
-
-            with st.spinner(
-                f"Transcribing in {selected_language}..."
-            ):
-
+        st.subheader("1\ufe0f\u20e3 Speech-to-Text")
+        if st.button("Transcribe Audio", key="transcribe_button", type="primary"):
+            with st.spinner(f"Transcribing in {st.session_state.selected_language}..."):
                 try:
-
-                    files = {
-                        "file": (
-                            "recording.wav",
-                            io.BytesIO(audio_bytes),
-                            "audio/wav",
-                        )
-                    }
-
-                    response = requests.post(
+                    resp = requests.post(
                         f"{API_BASE_URL}/api/v1/chat/voice/transcribe",
                         headers=get_headers(),
-                        files=files,
+                        files={"file": ("recording.wav", io.BytesIO(audio_bytes), "audio/wav")},
                         timeout=120,
                     )
-
-                    if response.ok:
-
-                        data = response.json()
-
-                        st.session_state["transcript"] = (
-                            data.get("transcript", "")
-                        )
-
+                    if resp.ok:
+                        data = resp.json()
+                        st.session_state["transcript"] = data.get("transcript", "")
                         st.session_state["stt_data"] = data
-
                     else:
-
-                        st.error(
-                            f"STT failed ({response.status_code})"
-                        )
-
-                        st.code(response.text)
-
+                        st.error(f"STT failed ({resp.status_code})")
+                        st.code(resp.text)
                 except Exception as e:
-
-                    st.error(
-                        f"Request failed: {e}"
-                    )
-
-        # -------------------------------------------------------------------
-        # Display transcript
-        # -------------------------------------------------------------------
+                    st.error(f"Request failed: {e}")
 
         if "transcript" in st.session_state:
-
-            st.subheader("📝 Transcript")
-
+            st.subheader("\U0001f4dd Transcript")
             st.text_area(
                 "STT Output",
                 value=st.session_state["transcript"],
@@ -414,248 +195,78 @@ with tab_voice:
                 disabled=True,
             )
 
-            st.write(
-                st.session_state.get(
-                    "stt_data",
-                    {},
-                )
-            )
-
-        # -------------------------------------------------------------------
-        # Full voice RAG
-        # -------------------------------------------------------------------
-
-        st.subheader("2️⃣ Voice → RAG → Answer")
-
-        if st.button(
-            "Ask RAG Using This Audio",
-            key="voice_rag_button",
-        ):
-
-            with st.spinner(
-                "Running STT → Retrieval → LLM..."
-            ):
-
+        st.subheader("2\ufe0f\u20e3 Voice \u2192 RAG \u2192 Answer")
+        if st.button("Ask RAG Using This Audio", key="voice_rag_button"):
+            with st.spinner("Running STT \u2192 Retrieval \u2192 LLM..."):
                 try:
-
-                    files = {
-                        "file": (
-                            "recording.wav",
-                            io.BytesIO(audio_bytes),
-                            "audio/wav",
-                        )
-                    }
-
-                    response = requests.post(
+                    resp = requests.post(
                         f"{API_BASE_URL}/api/v1/chat/voice",
                         headers=get_headers(),
-                        files=files,
+                        files={"file": ("recording.wav", io.BytesIO(audio_bytes), "audio/wav")},
                         timeout=180,
                     )
-
-                    if response.ok:
-
-                        data = response.json()
-
-                        st.session_state["voice_result"] = data
-
+                    if resp.ok:
+                        st.session_state["voice_result"] = resp.json()
                     else:
-
-                        st.error(
-                            f"Voice RAG failed ({response.status_code})"
-                        )
-
-                        st.code(response.text)
-
+                        st.error(f"Voice RAG failed ({resp.status_code})")
+                        st.code(resp.text)
                 except Exception as e:
-
-                    st.error(
-                        f"Request failed: {e}"
-                    )
-
-        # -------------------------------------------------------------------
-        # Display RAG result
-        # -------------------------------------------------------------------
+                    st.error(f"Request failed: {e}")
 
         if "voice_result" in st.session_state:
-
             result = st.session_state["voice_result"]
-
-            st.subheader("📝 Transcribed Question")
-
-            st.text_area(
-                "Question",
-                value=result.get("transcript", ""),
-                height=100,
-                disabled=True,
-            )
-
-            st.subheader("🤖 RAG Answer")
-
-            answer = clean_answer(result.get("answer", ""))
-
-            st.write(answer)
-
-            # ---------------------------------------------------------------
-            # TTS Audio
-            # ---------------------------------------------------------------
-
-            audio_base64 = result.get(
-                "audio_base64"
-            )
-
-            if audio_base64:
-
+            st.subheader("\U0001f4dd Transcribed Question")
+            st.text_area("Question", value=result.get("transcript", ""), height=100, disabled=True)
+            st.subheader("\U0001f916 RAG Answer")
+            st.write(clean_answer(result.get("answer", "")))
+            audio_b64 = result.get("audio_base64")
+            if audio_b64:
                 try:
-
-                    audio_bytes = base64.b64decode(
-                        audio_base64
-                    )
-
-                    st.subheader(
-                        "🔊 Assistant Voice"
-                    )
-
-                    st.audio(
-                        audio_bytes,
-                        format="audio/wav",
-                    )
-
+                    st.subheader("\U0001f50a Assistant Voice")
+                    st.audio(base64.b64decode(audio_b64), format="audio/wav")
                 except Exception as e:
-
-                    st.error(
-                        f"Could not play assistant audio: {e}"
-                    )
-
-            # ---------------------------------------------------------------
-            # Sources
-            # ---------------------------------------------------------------
-
-            sources = result.get(
-                "sources",
-                [],
-            )
-
+                    st.error(f"Could not play audio: {e}")
+            sources = result.get("sources", [])
             if sources:
+                with st.expander(f"\U0001f4da Sources ({len(sources)})"):
+                    for i, src in enumerate(sources, 1):
+                        st.markdown(f"**Source {i}**")
+                        st.write(src)
 
-                with st.expander(
-                    f"📚 Sources ({len(sources)})"
-                ):
+# ── Intelligent Voice AI ──────────────────────────────────────────────────────
+elif page == "\U0001f680 Intelligent Voice AI":
+    st.title("\U0001f680 Intelligent Voice AI")
+    st.write("This mode supports continuous listening and interruption (barge-in).")
+    voice_component()
 
-                    for i, source in enumerate(
-                        sources,
-                        start=1,
-                    ):
-
-                        st.markdown(
-                            f"**Source {i}**"
-                        )
-
-                        st.write(
-                            source
-                        )
-
-
-# ===========================================================================
-# TEXT TAB
-# ===========================================================================
-
-with tab_text:
-
-    st.header("Text Chat")
-
-    st.write(
-        f"Ask questions only in **{selected_language}**."
-    )
-
-    text_question = st.text_area(
-        "Enter your question",
-        placeholder=(
-            f"Type your question in {selected_language}..."
-        ),
-        height=120,
-    )
-
-    if st.button(
-        "Ask Question",
-        key="text_button",
-        type="primary",
-    ):
-
-        if not text_question.strip():
-
-            st.warning(
-                "Please enter a question."
-            )
-
-        else:
-
-            with st.spinner(
-                "Running RAG..."
-            ):
-
+# ── Upload Document ───────────────────────────────────────────────────────────
+elif page == "\U0001f4c4 Upload Document":
+    st.title("\U0001f4c4 Upload Document")
+    st.write("Upload a PDF document. The backend will parse, chunk, embed, and index it.")
+    uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"])
+    if uploaded_file:
+        st.success(f"Selected: {uploaded_file.name}")
+        st.write(f"File size: {uploaded_file.size:,} bytes")
+        if st.button("\U0001f4e4 Upload & Ingest", type="primary", key="upload_document_button"):
+            with st.spinner("Uploading and starting ingestion..."):
                 try:
-
-                    payload = {
-                        "message": text_question,
-                        
-                    }
-
-                    response = requests.post(
-                        f"{API_BASE_URL}/api/v1/chat/text",
+                    resp = requests.post(
+                        f"{API_BASE_URL}/api/v1/documents",
                         headers=get_headers(),
-                        json=payload,
-                        timeout=180,
+                        files={
+                            "file": (
+                                uploaded_file.name,
+                                uploaded_file.getvalue(),
+                                "application/pdf",
+                            )
+                        },
+                        timeout=300,
                     )
-
-                    if response.ok:
-
-                        data = response.json()
-
-                        st.subheader(
-                            "🤖 Answer"
-                        )
-
-                        answer = clean_answer(data.get("answer", ""))
-
-                        st.write(answer)
-
-                        sources = data.get(
-                            "sources",
-                            [],
-                        )
-
-                        if sources:
-
-                            with st.expander(
-                                f"📚 Sources ({len(sources)})"
-                            ):
-
-                                for i, source in enumerate(
-                                    sources,
-                                    start=1,
-                                ):
-
-                                    st.markdown(
-                                        f"**Source {i}**"
-                                    )
-
-                                    st.write(
-                                        source
-                                    )
-
+                    if resp.ok:
+                        st.success("\u2705 Document uploaded successfully!")
+                        st.json(resp.json())
                     else:
-
-                        st.error(
-                            f"Request failed ({response.status_code})"
-                        )
-
-                        st.code(
-                            response.text
-                        )
-
+                        st.error(f"\u274c Upload failed ({resp.status_code})")
+                        st.code(resp.text)
                 except Exception as e:
-
-                    st.error(
-                        f"Request failed: {e}"
-                    )
+                    st.error(f"\u274c Request failed: {e}")

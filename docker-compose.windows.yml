@@ -1,0 +1,26 @@
+# Windows override — use with: docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d
+# Removes network_mode:host (unsupported on Docker Desktop) and uses service-name DNS instead.
+
+x-app-env-windows: &app-env-windows
+  POSTGRES_URL: postgresql+psycopg://postgres:postgres@postgres:5432/assamese_rag
+  QDRANT_URL: http://qdrant:6333
+  OPENSEARCH_URL: http://opensearch:9200
+  REDIS_URL: redis://redis:6379/0
+
+services:
+  migrate:
+    network_mode: ""
+    environment: *app-env-windows
+
+  api:
+    network_mode: ""
+    environment: *app-env-windows
+
+  worker:
+    network_mode: ""
+    environment: *app-env-windows
+
+  ui:
+    network_mode: ""
+    environment:
+      API_BASE_URL: http://api:8000

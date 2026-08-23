@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Float,
+    LargeBinary,
     String,
     Text,
     text as sa_text,
@@ -37,8 +38,7 @@ class Document(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     original_filename: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
-    s3_bucket: Mapped[str] = mapped_column(Text, nullable=False)
-    s3_key: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_pdf: Mapped[bytes | None] = mapped_column(LargeBinary)
     mime_type: Mapped[str] = mapped_column(Text, nullable=False)
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     page_count: Mapped[int | None] = mapped_column(Integer)
