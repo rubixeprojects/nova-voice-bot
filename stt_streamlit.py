@@ -131,46 +131,58 @@ if page == "\U0001f916 Nova":
 
     _c = _convo(st.session_state.selected_language)
 
-    bubbles = "".join(_bubble(m) for m in _c["messages"])
-    st.markdown(
-        f'<div id="chat-scroll" style="height:calc(100vh - 320px);overflow-y:auto;border:1px solid #e0e0e0;'
-        f'border-radius:8px;padding:12px;background:#fff">{bubbles}'
-        f'</div>'
-        f'<script>var s=document.getElementById("chat-scroll");s.scrollTop=s.scrollHeight;</script>',
-        unsafe_allow_html=True,
+    _TYPING_BUBBLE = (
+        '<div style="display:flex;justify-content:flex-start;margin:6px 0">'
+        '<div style="background:#F0F0F0;padding:10px 14px;border-radius:16px 16px 16px 4px;'
+        'max-width:70%;color:#888;font-style:italic">Nova is typing\u2026</div></div>'
     )
+
+    def _render_chat(typing=False):
+        bubbles = "".join(_bubble(m) for m in _c["messages"])
+        if typing:
+            bubbles += _TYPING_BUBBLE
+        _chat_area.markdown(
+            f'<div id="chat-scroll" style="height:calc(100vh - 320px);overflow-y:auto;border:1px solid #e0e0e0;'
+            f'border-radius:8px;padding:12px;background:#fff">{bubbles}'
+            f'</div>'
+            f'<script>var s=document.getElementById("chat-scroll");s.scrollTop=s.scrollHeight;</script>',
+            unsafe_allow_html=True,
+        )
+
+    _chat_area = st.empty()
+    _render_chat()
 
     if prompt := st.chat_input(f"Ask a question in {st.session_state.selected_language}..."):
         _c["messages"].append({"role": "user", "content": prompt})
-        with st.spinner("Thinking..."):
-            try:
-                resp = requests.post(
-                    f"{API_BASE_URL}/api/v1/chat/text",
-                    headers=get_headers(),
-                    json={
-                        "message": prompt,
-                        "conversation_id": _c["conversation_id"],
-                    },
-                    timeout=180,
-                )
-                if resp.ok:
-                    data = resp.json()
-                    _c["conversation_id"] = str(data.get("conversation_id", ""))
-                    answer = clean_answer(data.get("answer", ""))
-                    sources = data.get("sources", [])
-                    _c["messages"].append(
-                        {"role": "assistant", "content": answer, "sources": sources}
-                    )
-                else:
-                    _c["messages"].append(
-                        {"role": "assistant",
-                         "content": f"Request failed ({resp.status_code})\n```\n{resp.text}\n```",
-                         "sources": []}
-                    )
-            except Exception as e:
+        _render_chat(typing=True)
+        try:
+            resp = requests.post(
+                f"{API_BASE_URL}/api/v1/chat/text",
+                headers=get_headers(),
+                json={
+                    "message": prompt,
+                    "conversation_id": _c["conversation_id"],
+                },
+                timeout=180,
+            )
+            if resp.ok:
+                data = resp.json()
+                _c["conversation_id"] = str(data.get("conversation_id", ""))
+                answer = clean_answer(data.get("answer", ""))
+                sources = data.get("sources", [])
                 _c["messages"].append(
-                    {"role": "assistant", "content": f"\u274c {e}", "sources": []}
+                    {"role": "assistant", "content": answer, "sources": sources}
                 )
+            else:
+                _c["messages"].append(
+                    {"role": "assistant",
+                     "content": f"Request failed ({resp.status_code})\n```\n{resp.text}\n```",
+                     "sources": []}
+                )
+        except Exception as e:
+            _c["messages"].append(
+                {"role": "assistant", "content": f"\u274c {e}", "sources": []}
+            )
         st.rerun()
 
 # ── Voice AI ──────────────────────────────────────────────────────────────────
