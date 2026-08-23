@@ -12,3 +12,5 @@ env/
 .DS_Store
 data/
 *.sqlite3
+*.bak
+.ui_user_id

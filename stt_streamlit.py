@@ -1,6 +1,7 @@
 import io
 import os
 import re
+import time
 import uuid
 import base64
 import requests
@@ -30,7 +31,13 @@ def clean_answer(text):
 
 
 if "user_id" not in st.session_state:
-    st.session_state.user_id = str(uuid.uuid4())
+    _id_file = os.path.join(os.path.dirname(__file__), ".ui_user_id")
+    try:
+        st.session_state.user_id = open(_id_file).read().strip()
+    except FileNotFoundError:
+        _uid = str(uuid.uuid4())
+        open(_id_file, "w").write(_uid)
+        st.session_state.user_id = _uid
 # Per-language conversation storage: {lang: {messages, conversation_id}}
 if "lang_convos" not in st.session_state:
     st.session_state.lang_convos = {}
@@ -262,27 +269,31 @@ elif page == "\U0001f4c4 Upload Document":
     st.title("\U0001f4c4 Upload Document")
 
     # ── Upload form ──────────────────────────────────────────────────────────
-    with st.expander("\U0001f4e4 Upload a new PDF", expanded=True):
-        uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"])
-        if uploaded_file:
-            st.caption(f"{uploaded_file.name} — {uploaded_file.size:,} bytes")
+    with st.expander("\U0001f4e4 Upload PDFs", expanded=True):
+        uploaded_files = st.file_uploader("Choose PDF files", type=["pdf"], accept_multiple_files=True)
+        if uploaded_files:
+            st.caption(f"{len(uploaded_files)} file(s) selected — {sum(f.size for f in uploaded_files):,} bytes total")
             if st.button("Upload & Ingest", type="primary", key="upload_document_button"):
-                with st.spinner("Uploading and starting ingestion..."):
-                    try:
-                        resp = requests.post(
-                            f"{API_BASE_URL}/api/v1/documents",
-                            headers=get_headers(),
-                            files={"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")},
-                            timeout=300,
-                        )
-                        if resp.ok:
-                            st.success("\u2705 Uploaded — ingestion started.")
-                            st.rerun()
-                        else:
-                            st.error(f"\u274c Upload failed ({resp.status_code})")
-                            st.code(resp.text)
-                    except Exception as e:
-                        st.error(f"\u274c {e}")
+                errors = []
+                with st.spinner(f"Uploading {len(uploaded_files)} file(s)..."):
+                    for f in uploaded_files:
+                        try:
+                            resp = requests.post(
+                                f"{API_BASE_URL}/api/v1/documents",
+                                headers=get_headers(),
+                                files={"file": (f.name, f.getvalue(), "application/pdf")},
+                                timeout=300,
+                            )
+                            if not resp.ok:
+                                errors.append(f"{f.name}: {resp.status_code} {resp.text}")
+                        except Exception as e:
+                            errors.append(f"{f.name}: {e}")
+                if errors:
+                    for err in errors:
+                        st.error(f"\u274c {err}")
+                else:
+                    st.success(f"\u2705 {len(uploaded_files)} file(s) uploaded — ingestion started.")
+                st.rerun()
 
     # ── Document list ────────────────────────────────────────────────────────
     st.subheader("\U0001f4c2 Your Documents")
@@ -302,10 +313,18 @@ elif page == "\U0001f4c4 Upload Document":
                     col_name, col_status, col_rename, col_del = st.columns([4, 1.5, 1, 0.8])
                     with col_name:
                         st.markdown(f"**{doc['display_name']}**")
-                        st.caption(f"{doc.get('page_count') or '?'} pages · {doc.get('file_size_bytes', 0)//1024:,} KB")
+                        size_kb = (doc.get('file_size_bytes') or 0) // 1024
+                        pages = doc.get('page_count')
+                        detail = f"{pages} pages · {size_kb:,} KB" if pages else f"{size_kb:,} KB"
+                        st.caption(detail)
                     with col_status:
-                        status_icon = {"ready": "\u2705", "processing": "\u23f3", "uploaded": "\u23f3", "error": "\u274c"}.get(doc["status"], "\u2022")
-                        st.markdown(f"{status_icon} {doc['status']}")
+                        status_map = {
+                            "ready":      "\u2705 Ready",
+                            "processing": "\u2699\ufe0f Processing",
+                            "uploaded":   "\u23f3 Queued",
+                            "error":      "\u274c Error",
+                        }
+                        st.markdown(status_map.get(doc["status"], doc["status"]))
                     with col_rename:
                         new_name = st.text_input("", value=doc["display_name"], key=f"rename_{doc['id']}", label_visibility="collapsed")
                         if new_name != doc["display_name"]:
@@ -319,13 +338,20 @@ elif page == "\U0001f4c4 Upload Document":
                                 st.rerun()
                     with col_del:
                         if st.button("\U0001f5d1\ufe0f", key=f"del_{doc['id']}", help="Delete"):
-                            requests.delete(
+                            del_resp = requests.delete(
                                 f"{API_BASE_URL}/api/v1/documents/{doc['id']}",
                                 headers=get_headers(),
                                 timeout=15,
                             )
-                            st.rerun()
+                            if del_resp.ok:
+                                st.rerun()
+                            else:
+                                st.error(f"Delete failed ({del_resp.status_code}): {del_resp.text}")
                     st.divider()
+            # poll AFTER rendering so the list is visible during the wait
+            if any(d["status"] in ("uploaded", "processing") for d in docs):
+                time.sleep(3)
+                st.rerun()
         else:
             st.error(f"Could not load documents ({list_resp.status_code})")
     except Exception as e:

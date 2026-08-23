@@ -163,14 +163,6 @@ async def delete_document(
     except Exception:  # noqa: BLE001
         log.exception("document.delete.opensearch_failed", document_id=str(document_id))
 
-    if settings.s3_hard_delete_on_doc_delete:
-        from app.core.storage import delete_object
-
-        try:
-            delete_object(doc.s3_key)
-        except Exception:  # noqa: BLE001
-            log.exception("document.delete.s3_failed", document_id=str(document_id))
-
     await db.execute(
         update(Document)
         .where(Document.id == document_id)
