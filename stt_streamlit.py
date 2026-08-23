@@ -42,9 +42,9 @@ if "user_id" not in st.session_state:
 if "lang_convos" not in st.session_state:
     st.session_state.lang_convos = {}
 if "page" not in st.session_state:
-    st.session_state.page = "Bot"
+    st.session_state.page = "Nova"
 
-st.set_page_config(page_title="Multilingual RAG Assistant", page_icon="\U0001f916", layout="wide")
+st.set_page_config(page_title="Nova", page_icon="\U0001f916", layout="wide")
 
 st.markdown("""<style>
 html, body { overflow: hidden !important; height: 100% !important; }
@@ -55,8 +55,8 @@ html, body { overflow: hidden !important; height: 100% !important; }
 </style>""", unsafe_allow_html=True)
 
 with st.sidebar:
-    st.title("\U0001f916 RAG Assistant")
-    for _p in ["\U0001f916 Bot", "\U0001f3a4 Voice AI", "\U0001f680 Intelligent Voice AI", "\U0001f4c4 Upload Document"]:
+    st.title("\U0001f916 Nova")
+    for _p in ["\U0001f916 Nova", "\U0001f3a4 Voice AI", "\U0001f680 Intelligent Voice AI", "\U0001f4c4 Upload Document"]:
         if st.button(_p, use_container_width=True, type="primary" if st.session_state.page == _p else "secondary"):
             st.session_state.page = _p
             st.rerun()
@@ -85,10 +85,10 @@ def get_headers():
 page = st.session_state.page
 
 # ── Bot ──────────────────────────────────────────────────────────────────────
-if page == "\U0001f916 Bot":
+if page == "\U0001f916 Nova":
     _title_col, _clear_col, _lang_col = st.columns([5, 1, 1], vertical_alignment="bottom")
     with _title_col:
-        st.title("\U0001f916 Bot")
+        st.title("\U0001f916 Nova")
     with _clear_col:
         if _convo(st.session_state.selected_language)["messages"] and st.button("\U0001f5d1\ufe0f Clear", use_container_width=True):
             st.session_state.lang_convos[st.session_state.selected_language] = {"messages": [], "conversation_id": None}

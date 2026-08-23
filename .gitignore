@@ -14,3 +14,4 @@ data/
 *.sqlite3
 *.bak
 .ui_user_id
+write_ui.py

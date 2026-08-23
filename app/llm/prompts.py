@@ -1,18 +1,39 @@
 ﻿"""Bilingual prompt construction for sarvam-105b."""
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 from app.cleaner.unicode import detect_query_language
 from app.retrieval.types import RetrievedChunk
 
+def _load_persona() -> tuple[str, str]:
+    """Return (name, prompt) from persona.yml; fall back gracefully."""
+    persona_file = Path(__file__).resolve().parents[2] / "persona.yml"
+    try:
+        data = yaml.safe_load(persona_file.read_text()) or {}
+        name = data.get("name", "Nova").strip()
+        prompt = data.get("prompt", "").strip()
+        if prompt:
+            return name, prompt
+    except Exception:
+        pass
+    return "Nova", "You are Nova, your assistant."
+
+_PERSONA_NAME, _PERSONA_PROMPT = _load_persona()
+
 SYSTEM_PROMPT = (
-    "You are a helpful multilingual assistant.\n"
+    _PERSONA_PROMPT + "\n"
+    f"When users greet you (hi, hello, hey, etc.), respond only with: 'Hi! I'm {_PERSONA_NAME}, your assistant. How can I help you?'\n"
     "1. Answer naturally, conversationally, and concisely.\n"
     "2. NEVER say phrases like 'based on the context', 'according to the provided context', "
     "'the context mentions', or any similar meta-references to the source material. "
     "Just answer directly as if you know the information.\n"
     "3. For casual conversation, greetings, and general questions "
     "that do not require documents, answer directly using your general knowledge.\n"
-    "4. Keep answers short and conversational — normally 1-3 sentences.\n"
+    "4. Keep answers short and conversational — normally 1-3 sentences. "
+    "For structured information (fees, course lists, eligibility), use bullet points or a table instead.\n"
     "5. Give concise explanations with short sentences unless the user asks for detail.\n"
     "6. Do not provide analysis or reasoning unless requested.\n"
     "7. For document-based answers, cite relevant sources with [S#] markers. "
