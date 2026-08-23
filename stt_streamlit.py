@@ -260,31 +260,73 @@ elif page == "\U0001f680 Intelligent Voice AI":
 # ── Upload Document ───────────────────────────────────────────────────────────
 elif page == "\U0001f4c4 Upload Document":
     st.title("\U0001f4c4 Upload Document")
-    st.write("Upload a PDF document. The backend will parse, chunk, embed, and index it.")
-    uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"])
-    if uploaded_file:
-        st.success(f"Selected: {uploaded_file.name}")
-        st.write(f"File size: {uploaded_file.size:,} bytes")
-        if st.button("\U0001f4e4 Upload & Ingest", type="primary", key="upload_document_button"):
-            with st.spinner("Uploading and starting ingestion..."):
-                try:
-                    resp = requests.post(
-                        f"{API_BASE_URL}/api/v1/documents",
-                        headers=get_headers(),
-                        files={
-                            "file": (
-                                uploaded_file.name,
-                                uploaded_file.getvalue(),
-                                "application/pdf",
+
+    # ── Upload form ──────────────────────────────────────────────────────────
+    with st.expander("\U0001f4e4 Upload a new PDF", expanded=True):
+        uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"])
+        if uploaded_file:
+            st.caption(f"{uploaded_file.name} — {uploaded_file.size:,} bytes")
+            if st.button("Upload & Ingest", type="primary", key="upload_document_button"):
+                with st.spinner("Uploading and starting ingestion..."):
+                    try:
+                        resp = requests.post(
+                            f"{API_BASE_URL}/api/v1/documents",
+                            headers=get_headers(),
+                            files={"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")},
+                            timeout=300,
+                        )
+                        if resp.ok:
+                            st.success("\u2705 Uploaded — ingestion started.")
+                            st.rerun()
+                        else:
+                            st.error(f"\u274c Upload failed ({resp.status_code})")
+                            st.code(resp.text)
+                    except Exception as e:
+                        st.error(f"\u274c {e}")
+
+    # ── Document list ────────────────────────────────────────────────────────
+    st.subheader("\U0001f4c2 Your Documents")
+    try:
+        list_resp = requests.get(
+            f"{API_BASE_URL}/api/v1/documents",
+            headers=get_headers(),
+            params={"limit": 50},
+            timeout=30,
+        )
+        if list_resp.ok:
+            docs = list_resp.json().get("items", [])
+            if not docs:
+                st.info("No documents uploaded yet.")
+            else:
+                for doc in docs:
+                    col_name, col_status, col_rename, col_del = st.columns([4, 1.5, 1, 0.8])
+                    with col_name:
+                        st.markdown(f"**{doc['display_name']}**")
+                        st.caption(f"{doc.get('page_count') or '?'} pages · {doc.get('file_size_bytes', 0)//1024:,} KB")
+                    with col_status:
+                        status_icon = {"ready": "\u2705", "processing": "\u23f3", "uploaded": "\u23f3", "error": "\u274c"}.get(doc["status"], "\u2022")
+                        st.markdown(f"{status_icon} {doc['status']}")
+                    with col_rename:
+                        new_name = st.text_input("", value=doc["display_name"], key=f"rename_{doc['id']}", label_visibility="collapsed")
+                        if new_name != doc["display_name"]:
+                            if st.button("Save", key=f"save_{doc['id']}"):
+                                requests.patch(
+                                    f"{API_BASE_URL}/api/v1/documents/{doc['id']}",
+                                    headers=get_headers(),
+                                    json={"name": new_name},
+                                    timeout=15,
+                                )
+                                st.rerun()
+                    with col_del:
+                        if st.button("\U0001f5d1\ufe0f", key=f"del_{doc['id']}", help="Delete"):
+                            requests.delete(
+                                f"{API_BASE_URL}/api/v1/documents/{doc['id']}",
+                                headers=get_headers(),
+                                timeout=15,
                             )
-                        },
-                        timeout=300,
-                    )
-                    if resp.ok:
-                        st.success("\u2705 Document uploaded successfully!")
-                        st.json(resp.json())
-                    else:
-                        st.error(f"\u274c Upload failed ({resp.status_code})")
-                        st.code(resp.text)
-                except Exception as e:
-                    st.error(f"\u274c Request failed: {e}")
+                            st.rerun()
+                    st.divider()
+        else:
+            st.error(f"Could not load documents ({list_resp.status_code})")
+    except Exception as e:
+        st.error(f"\u274c {e}")
