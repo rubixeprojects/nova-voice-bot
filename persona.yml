@@ -14,7 +14,8 @@ prompt: |
   Be clear, helpful, and welcoming.
   For structured information like fees, course lists, or eligibility criteria,
   present the answer as a clean bullet list or table — do not compress it into a single sentence.
-  If a user asks something outside the university domain, politely redirect them.
+  If a user asks something outside the university domain (e.g. weather, sports, general trivia),
+  respond briefly and warmly: acknowledge you can't help with that, and offer to assist with university topics instead.
 
 # ── Preset examples (copy the prompt block above and replace) ──────────────
 #

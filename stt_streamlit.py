@@ -115,7 +115,8 @@ if page == "\U0001f916 Nova":
             )
         srcs = msg.get("sources", [])
         src_html = ""
-        if srcs:
+        # only show sources when the answer actually cites them
+        if srcs and re.search(r'\[S\d+\]', text):
             items = "".join(
                 f'<div style="font-size:0.78em;color:#555;margin-top:4px">'
                 f'📄 {s.get("document_name","")} p.{s.get("page_number","?")}</div>'
