@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.deps import get_current_user_id, get_request_id_dep
+from app.core.deps import get_current_user_id
 from app.core.logging import get_logger
 from app.models import Document
 from app.retrieval import bm25, dense
@@ -52,7 +52,6 @@ async def _get_owned_doc(
 async def upload_document(
     file: UploadFile = File(...),
     user_id: uuid.UUID = Depends(get_current_user_id),
-    request_id: str = Depends(get_request_id_dep),
     db: AsyncSession = Depends(get_db),
 ):
     data = await file.read()
@@ -82,7 +81,7 @@ async def upload_document(
 
     # Enqueue async ingestion — propagate request_id for end-to-end tracing.
     celery_app.send_task(
-        "ingest_document", args=[str(document_id), request_id]
+        "ingest_document", args=[str(document_id)]
     )
     log.info("document.uploaded", document_id=str(document_id), size=len(data))
 

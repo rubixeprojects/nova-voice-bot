@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Nova Voice — Test Client</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #151b23;
+    --border: #262d38;
+    --text: #e6edf3;
+    --muted: #7d8590;
+    --idle: #7d8590;
+    --listening: #3fb950;
+    --processing: #d29922;
+    --speaking: #58a6ff;
+    --danger: #f85149;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+  .sticky-header {
+    flex-shrink: 0;
+  }
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 24px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--idle);
+    transition: background 0.15s ease;
+  }
+  .dot.LISTENING { background: var(--listening); box-shadow: 0 0 8px var(--listening); }
+  .dot.PROCESSING { background: var(--processing); box-shadow: 0 0 8px var(--processing); }
+  .dot.SPEAKING { background: var(--speaking); box-shadow: 0 0 8px var(--speaking); }
+  #stateLabel { font-size: 14px; font-weight: 600; }
+  button {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--speaking); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .row { display: flex; gap: 10px; }
+  .log {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+  .log .you { color: var(--speaking); }
+  .log .bot { color: var(--listening); }
+  .log .sys { color: var(--processing); }
+  #transcriptLog {
+    max-height: 260px;
+    overflow-y: auto;
+  }
+  .metric {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .metric:last-child { border-bottom: none; }
+  .metric span:last-child { color: var(--text); }
+</style>
+</head>
+<body>
+
+<div class="sticky-header">
+<h1>Nova Voice — Barge-in Test Client</h1>
+
+<div class="panel">
+  <div class="status-row">
+    <div class="dot" id="stateDot"></div>
+    <div id="stateLabel">IDLE</div>
+  </div>
+  <div class="row">
+    <button id="connectBtn">Connect + Start Mic</button>
+    <button id="stopBtn" class="danger" disabled>Disconnect</button>
+    <select id="languageSelect" style="background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-family: inherit; font-size: 13px;">
+      <option value="en-IN">English</option>
+      <option value="hi-IN">Hindi</option>
+      <option value="as-IN">Assamese</option>
+      <option value="kn-IN">Kannada</option>
+    </select>
+  </div>
+</div>
+
+<div class="panel">
+  <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Live STT Transcript</div>
+  <div id="liveTranscript" style="font-size: 18px; line-height: 1.5; min-height: 28px; color: var(--text);">
+    <span style="color: var(--muted);">— waiting for speech —</span>
+  </div>
+</div>
+</div>
+
+<div class="scroll-area">
+<div class="panel">
+  <div id="transcriptLog" class="log"></div>
+</div>
+</div>
+
+<script>
+const WS_HOST = window.location.hostname || "localhost";
+const WS_PORT = 8766;
+const WS_URL = `ws://${WS_HOST}:${WS_PORT}`;
+
+
+const TARGET_SAMPLE_RATE = 16000;
+
+let ws = null;
+let audioCtx = null;
+let micStream = null;
+let workletNode = null;
+
+// --- Playback queue state (this is the piece that makes barge-in actually work) ---
+let activeSources = [];      // currently scheduled/playing AudioBufferSourceNodes
+let nextStartTime = 0;       // when the next queued chunk should start playing
+
+
+function log(text, cls) {
+  const el = document.getElementById("transcriptLog");
+  const line = document.createElement("div");
+  line.className = cls || "";
+  line.textContent = text;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setState(state) {
+  document.getElementById("stateLabel").textContent = state;
+  const dot = document.getElementById("stateDot");
+  dot.className = "dot " + state;
+}
+
+// ---------- Playback: Web Audio queue with instant-stop ----------
+
+function clearPlaybackQueue() {
+  // Stop everything currently playing or scheduled, and reset the queue.
+  for (const src of activeSources) {
+    try { src.stop(0); } catch (e) { /* already stopped, ignore */ }
+    try { src.disconnect(); } catch (e) {}
+  }
+  activeSources = [];
+  nextStartTime = audioCtx ? audioCtx.currentTime : 0;
+  
+}
+
+async function enqueuePlayback(base64Wav, isFinal) {
+  if (!audioCtx) return;
+  const binary = atob(base64Wav);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  let audioBuffer;
+  try {
+    audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
+  } catch (e) {
+    log(`[sys] Failed to decode TTS audio chunk: ${e}`, "sys");
+    return;
+  }
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = audioBuffer;
+  src.connect(audioCtx.destination);
+
+  const startAt = Math.max(audioCtx.currentTime, nextStartTime);
+  src.start(startAt);
+  nextStartTime = startAt + audioBuffer.duration;
+
+  activeSources.push(src);
+  src.onended = () => {
+    activeSources = activeSources.filter(s => s !== src);
+    if (isFinal && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "cmd", name: "playback_finished" }));
+    }
+  };
+}
+
+// ---------- Mic capture: AudioWorklet resampling to 16kHz mono PCM16 ----------
+
+const WORKLET_SOURCE = `
+class PCMResampler extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    this.targetRate = options.processorOptions.targetRate;
+    this.inputRate = sampleRate; // AudioWorkletGlobalScope
+    this.ratio = this.inputRate / this.targetRate;
+    this.acc = [];
+    this.chunkSamples = Math.round(this.targetRate * 0.02); // ~20ms chunks
+  }
+  process(inputs) {
+    const input = inputs[0];
+    if (!input || !input[0]) return true;
+    const channel = input[0];
+
+    // Naive downsample by nearest-neighbor decimation.
+    for (let i = 0; i < channel.length; i += this.ratio) {
+      const idx = Math.floor(i);
+      if (idx < channel.length) this.acc.push(channel[idx]);
+    }
+
+    while (this.acc.length >= this.chunkSamples) {
+      const chunk = this.acc.splice(0, this.chunkSamples);
+      const pcm16 = new Int16Array(chunk.length);
+      for (let i = 0; i < chunk.length; i++) {
+        let s = Math.max(-1, Math.min(1, chunk[i]));
+        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      this.port.postMessage(pcm16.buffer, [pcm16.buffer]);
+    }
+    return true;
+  }
+}
+registerProcessor("pcm-resampler", PCMResampler);
+`;
+
+async function startMic() {
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+  });
+
+  audioCtx = new AudioContext();
+  
+
+  const blob = new Blob([WORKLET_SOURCE], { type: "application/javascript" });
+  const workletUrl = URL.createObjectURL(blob);
+  await audioCtx.audioWorklet.addModule(workletUrl);
+
+  const micSource = audioCtx.createMediaStreamSource(micStream);
+  workletNode = new AudioWorkletNode(audioCtx, "pcm-resampler", {
+    processorOptions: { targetRate: TARGET_SAMPLE_RATE }
+  });
+
+  workletNode.port.onmessage = (event) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(event.data); // raw PCM16 ArrayBuffer, binary frame
+    }
+  };
+
+  micSource.connect(workletNode);
+  // Not connecting workletNode to destination — we don't want to hear our own mic.
+}
+
+function stopMic() {
+  if (workletNode) { workletNode.disconnect(); workletNode = null; }
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+}
+
+// ---------- WebSocket wiring ----------
+
+async function connect() {
+  document.getElementById("connectBtn").disabled = true;
+
+  ws = new WebSocket(WS_URL);
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = async () => {
+    log("[sys] WebSocket connected", "sys");
+    await startMic();
+    ws.send(JSON.stringify({ type: "cmd", name: "start" }));
+    const currentLang = document.getElementById("languageSelect").value;
+    ws.send(JSON.stringify({ type: "cmd", name: "set_language", language: currentLang }));
+    document.getElementById("stopBtn").disabled = false;
+  };
+
+  ws.onmessage = (event) => {
+    if (typeof event.data !== "string") return; // audio always comes as base64 JSON here
+    let msg;
+    try { msg = JSON.parse(event.data); } catch (e) { return; }
+
+    switch (msg.type) {
+      case "state":
+        setState(msg.state);
+        break;
+      case "cmd":
+        if (msg.name === "stop_playback") {
+          clearPlaybackQueue();
+          bargeInCount += 1;
+          log("[sys] Barge-in: playback stopped", "sys");
+        }
+        break;
+      case "transcript":
+        log(`[you] ${msg.text}`, "you");
+        document.getElementById("liveTranscript").textContent = msg.text;
+        break;
+      case "answer_delta":
+        if (!window.__streamingAnswerText) window.__streamingAnswerText = "";
+        window.__streamingAnswerText += msg.text;
+        {
+          const el = document.getElementById("transcriptLog");
+          let liveDiv = document.getElementById("liveAnswerStream");
+          if (!liveDiv) {
+            liveDiv = document.createElement("div");
+            liveDiv.id = "liveAnswerStream";
+            liveDiv.className = "bot";
+            el.appendChild(liveDiv);
+          }
+          const displayText = window.__streamingAnswerText
+            .replace(/\[\s*s\d+(?:\s*,\s*s\d+)*\s*\]/gi, "")
+            .replace(/\[\s*\]/g, "");
+          liveDiv.textContent = `[bot] ${displayText}`;
+          el.scrollTop = el.scrollHeight;
+        }
+        break;
+      case "answer":
+        {
+          const liveDiv = document.getElementById("liveAnswerStream");
+          if (liveDiv) liveDiv.remove();
+        }
+        window.__streamingAnswerText = "";
+        log(`[bot] ${msg.text}`, "bot");
+        break;
+      case "audio":
+        enqueuePlayback(msg.audio, msg.is_final ===true);
+        break;
+      default:
+        break;
+    }
+  };
+
+  ws.onclose = () => {
+    log("[sys] WebSocket disconnected", "sys");
+    setState("IDLE");
+    document.getElementById("connectBtn").disabled = false;
+    document.getElementById("stopBtn").disabled = true;
+  };
+
+  ws.onerror = (e) => {
+    log(`[sys] WebSocket error`, "sys");
+  };
+}
+
+function disconnect() {
+  stopMic();
+  clearPlaybackQueue();
+  if (ws) { ws.close(); ws = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+}
+
+document.getElementById("connectBtn").onclick = connect;
+document.getElementById("stopBtn").onclick = disconnect;
+
+document.getElementById("languageSelect").onchange = (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "cmd", name: "set_language", language: e.target.value }));
+    log(`[sys] Language set to: ${e.target.options[e.target.selectedIndex].text}`, "sys");
+  }
+};
+</script>
+
+</body>
+</html>

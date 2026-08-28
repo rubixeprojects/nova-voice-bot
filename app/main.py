@@ -43,13 +43,11 @@ app = FastAPI(
     description=(
         "Retrieval-Augmented Generation over Assamese documents with text & "
         "voice chat.\n\n"
-        "**Authentication:** All `/api/v1/*` endpoints require the trusted "
-        "`X-User-Id` header (UUID) set by the upstream gateway. Ops/docs "
-        "endpoints are public.\n\n"
-        "**Correlation:** Optional `X-Request-Id` header (UUID). Generated if "
-        "absent and echoed on every response.\n\n"
-        "**Swagger:** Click **Authorize**, enter a test user UUID, then try "
-        "endpoints from this page."
+        "**User Scope:** All requests use the universal university user ID "
+        "configured in `UNIVERSAL_USER_ID`.\n\n"
+        "**Conversation:** Each conversation is separated by its "
+        "`conversation_id`.\n\n"
+        "**Swagger:** No `X-User-Id` or `X-Request-Id` headers are required."
     ),
     lifespan=lifespan,
     docs_url="/docs",
@@ -96,24 +94,6 @@ def custom_openapi():
         description=app.description,
         routes=app.routes,
     )
-    components = schema.setdefault("components", {})
-    security_schemes = components.setdefault("securitySchemes", {})
-    security_schemes["UserIdHeader"] = {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-User-Id",
-        "description": (
-            "Trusted user UUID from the upstream auth gateway. "
-            "Example: 550e8400-e29b-41d4-a716-446655440000"
-        ),
-    }
-    security_schemes["RequestIdHeader"] = {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-Request-Id",
-        "description": "Optional request correlation UUID (generated if omitted).",
-    }
-    schema["security"] = [{"UserIdHeader": []}, {"RequestIdHeader": []}]
 
     for path, path_item in schema.get("paths", {}).items():
         if path in _PUBLIC_OPENAPI_PATHS:

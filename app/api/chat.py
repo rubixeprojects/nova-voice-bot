@@ -13,7 +13,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal, get_db
-from app.core.deps import get_current_user_id, get_request_id_dep
+from app.core.deps import get_current_user_id
 from app.core.logging import get_logger
 from app.llm import sarvam_client
 from app.cleaner.unicode import detect_query_language
@@ -158,18 +158,18 @@ async def _persist_turn(
 async def chat_text(
     body: ChatTextRequest,
     user_id: uuid.UUID = Depends(get_current_user_id),
-    request_id: str = Depends(get_request_id_dep),
     db: AsyncSession = Depends(get_db),
     x_language: str | None = Header(default=None),
 ):
     started = time.perf_counter()
+    request_id = str(uuid.uuid4())
     conv = await _get_or_create_conversation(
         db, body.conversation_id, user_id, body.message
     )
     _cleaned, chunks = await retrieve(
         db, body.message, user_id,
         document_ids=body.document_ids,
-        conversation_id=conv.id, request_id=request_id,
+        conversation_id=conv.id,
     )
     history = await _load_history(db, conv.id, settings.conversation_memory_turns)
     query_lang = x_language if x_language else detect_query_language(body.message)
@@ -179,7 +179,7 @@ async def chat_text(
     )
 
     answer = await sarvam_client.chat_completion(
-        messages, db=db, conversation_id=conv.id, request_id=request_id
+        messages, db=db, conversation_id=conv.id
     )
     latency_ms = int((time.perf_counter() - started) * 1000)
 
@@ -202,11 +202,11 @@ async def chat_text(
 async def chat_text_stream(
     body: ChatTextRequest,
     user_id: uuid.UUID = Depends(get_current_user_id),
-    request_id: str = Depends(get_request_id_dep),
     x_language: str | None = Header(default=None),
 ):
     async def event_gen():
         started = time.perf_counter()
+        request_id = str(uuid.uuid4())
         # Own the session for the whole stream lifetime.
         async with AsyncSessionLocal() as db:
             try:
@@ -219,7 +219,7 @@ async def chat_text_stream(
                 _cleaned, chunks = await retrieve(
                     db, body.message, user_id,
                     document_ids=body.document_ids,
-                    conversation_id=conv.id, request_id=request_id,
+                    conversation_id=conv.id, 
                 )
                 history = await _load_history(
                     db, conv.id, settings.conversation_memory_turns
@@ -231,7 +231,7 @@ async def chat_text_stream(
 
                 answer_parts: list[str] = []
                 async for delta in sarvam_client.chat_completion_stream(
-                    messages, db=db, conversation_id=conv.id, request_id=request_id
+                    messages, db=db, conversation_id=conv.id
                 ):
                     answer_parts.append(delta)
                     yield {"event": "token", "data": json.dumps({"delta": delta})}
@@ -274,10 +274,10 @@ async def chat_voice(
         default=None, description="JSON array of document UUIDs"
     ),
     user_id: uuid.UUID = Depends(get_current_user_id),
-    request_id: str = Depends(get_request_id_dep),
     db: AsyncSession = Depends(get_db),
 ):
     started = time.perf_counter()
+    request_id = str(uuid.uuid4())
     audio = await file.read()
     if not audio:
         raise HTTPException(status_code=400, detail="Empty audio file")
@@ -295,7 +295,7 @@ async def chat_voice(
         content_type=file.content_type or "audio/wav",
         db=db,
         conversation_id=conv.id,
-        request_id=request_id,
+        
     )
 
     transcript = stt["transcript"]
@@ -360,7 +360,7 @@ async def chat_voice(
     intent = await sarvam_client.route_query(
         transcript,
         db=db,
-        request_id=request_id,
+       
     )
 
 
@@ -378,7 +378,7 @@ async def chat_voice(
             user_id,
             document_ids=doc_ids,
             conversation_id=conv.id,
-            request_id=request_id,
+            
         )
     else:
         chunks = []
@@ -390,7 +390,7 @@ async def chat_voice(
         query_language=language_code,
     )
     answer = await sarvam_client.chat_completion(
-        messages, db=db, conversation_id=conv.id, request_id=request_id
+        messages, db=db, conversation_id=conv.id
     )
     audio_answer = await sarvam_client.text_to_speech(
         text=answer,
@@ -422,7 +422,6 @@ async def chat_voice_stream(
     conversation_id: uuid.UUID | None = Form(default=None),
     document_ids: str | None = Form(default=None),
     user_id: uuid.UUID = Depends(get_current_user_id),
-    request_id: str = Depends(get_request_id_dep),
 ):
     audio = await file.read()
 
@@ -438,6 +437,7 @@ async def chat_voice_stream(
 
     async def event_gen():
         started = time.perf_counter()
+        request_id = str(uuid.uuid4())
 
         async with AsyncSessionLocal() as db:
             try:
@@ -469,7 +469,7 @@ async def chat_voice_stream(
                     content_type=content_type,
                     db=db,
                     conversation_id=conv.id,
-                    request_id=request_id,
+                    
                 )
 
                 transcript = stt["transcript"]
@@ -513,7 +513,7 @@ async def chat_voice_stream(
                 intent = await sarvam_client.route_query(
                     transcript,
                     db=db,
-                    request_id=request_id,
+                    
                 )
 
                 log.info(
@@ -542,7 +542,7 @@ async def chat_voice_stream(
                         user_id,
                         document_ids=doc_ids,
                         conversation_id=conv.id,
-                        request_id=request_id,
+                        
                     )
                 else:
                     chunks = []
@@ -568,7 +568,7 @@ async def chat_voice_stream(
                     messages,
                     db=db,
                     conversation_id=conv.id,
-                    request_id=request_id,
+                    
                 ):
                     answer_parts.append(delta)
 
@@ -663,9 +663,9 @@ async def chat_voice_stream(
 async def transcribe_voice(
     file: UploadFile = File(...),
     user_id: uuid.UUID = Depends(get_current_user_id),
-    request_id: str = Depends(get_request_id_dep),
     db: AsyncSession = Depends(get_db),
 ):
+    request_id = str(uuid.uuid4())
     audio = await file.read()
 
     if not audio:
@@ -679,7 +679,7 @@ async def transcribe_voice(
         filename=file.filename or "recording.webm",
         content_type=file.content_type or "audio/webm",
         db=db,
-        request_id=request_id,
+        
     )
 
     transcript = result.get("transcript", "")

@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     log_level: str = "INFO"
     max_upload_mb: int = 50
+    universal_user_id: str
 
 
 @lru_cache
