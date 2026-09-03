@@ -23,7 +23,11 @@ log = get_logger(__name__)
 
 
 from app.ingestion.embedding import _embedding_backend, _load_model
-from app.retrieval.rerank import _use_hf_api as _reranker_uses_hf, _load as _load_reranker
+from app.retrieval.rerank import (
+    _use_hf_api as _reranker_uses_hf,
+    _is_endpoint as _reranker_is_endpoint,
+    _load as _load_reranker,
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -38,15 +42,17 @@ async def lifespan(app: FastAPI):
         except Exception:  # noqa: BLE001
             log.warning("app.bootstrap_failed", component=name)
 
-    # Pre-load local BGE-M3 so it's warm before the first HF fallback.
-    if _embedding_backend() != "custom_http":
+    # Pre-load local models ONLY when local is the primary backend. With HF
+    # inference (HF_TOKEN) or a custom HTTP endpoint configured, skip the
+    # ~4.5 GB local warm standby — it lazy-loads on demand if a remote call
+    # ever fails. Keeps RAM sane on small hosts.
+    if _embedding_backend() == "local":
         try:
             _load_model()
         except Exception:  # noqa: BLE001
             log.warning("app.bootstrap_failed", component="bge_m3_local")
 
-    # Pre-load local BGE-reranker-v2-m3 so it's warm before the first HF fallback.
-    if _reranker_uses_hf():
+    if not _reranker_uses_hf() and not _reranker_is_endpoint():
         try:
             _load_reranker()
         except Exception:  # noqa: BLE001
@@ -139,3 +145,9 @@ async def root():
 @app.get("/stt-test")
 async def stt_test():
     return FileResponse("app/static/stt_test.html")
+
+
+@app.get("/voice", include_in_schema=False)
+async def voice_client():
+    """Combined chat + voice test client (talks to this API + ws://<host>:8766)."""
+    return FileResponse("app/static/voice_client.html")

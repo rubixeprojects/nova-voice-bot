@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libglib2.0-0 \
     libgl1 \
+    libc++1 \
+    libc++abi1 \
     curl \
     git \
     && rm -rf /var/lib/apt/lists/*

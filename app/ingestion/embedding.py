@@ -81,6 +81,11 @@ def _model_id() -> str:
 
 
 def _use_hf_api() -> bool:
+    # Escape hatch: HF serverless inference for bge-m3 is flaky on free tier
+    # (502s, long cold-starts). BGE_M3_FORCE_LOCAL pins embeddings to the local
+    # model so query/ingest embedding is deterministic. Reranker is unaffected.
+    if os.environ.get("BGE_M3_FORCE_LOCAL", "").strip().lower() in {"1", "true", "yes"}:
+        return False
     return bool(settings.hf_token)
 
 
@@ -97,25 +102,30 @@ def _embedding_backend() -> str:
 
 
 _HF_TIMEOUT_SECONDS = float(os.environ.get("HF_EMBED_TIMEOUT_SECONDS", "18"))
+_HF_ROUTER_BASE = "https://router.huggingface.co/hf-inference/models"
 
 
 def _get_hf_client():
+    """Reusable httpx client for the HF Inference router.
+
+    NOTE: we call the plain REST endpoint directly instead of
+    huggingface_hub.InferenceClient — the SDK's provider routing hangs
+    (ReadTimeout) for feature-extraction on this model, while the REST
+    endpoint responds in <1s.
+    """
     global _hf_client
     if _hf_client is not None:
         return _hf_client
     with _lock:
         if _hf_client is None:
-            from huggingface_hub import InferenceClient
-
             log.info(
                 "bge_m3.hf_client",
                 model=_model_id(),
-                provider="hf-inference",
+                provider="hf-inference-rest",
                 timeout=_HF_TIMEOUT_SECONDS,
             )
-            _hf_client = InferenceClient(
-                provider="hf-inference",
-                api_key=settings.hf_token,
+            _hf_client = httpx.Client(
+                headers={"Authorization": f"Bearer {settings.hf_token}"},
                 timeout=_HF_TIMEOUT_SECONDS,
             )
     return _hf_client
@@ -199,16 +209,21 @@ def _embed_one_hf(text: str) -> list[float]:
     from huggingface_hub.errors import HfHubHTTPError
 
     client = _get_hf_client()
-    try:
-        raw = client.feature_extraction(text, model=_model_id())
-    except HfHubHTTPError as exc:
+    resp = client.post(
+        f"{_HF_ROUTER_BASE}/{_model_id()}/pipeline/feature-extraction",
+        json={"inputs": text},
+    )
+    if resp.status_code == 503:
+        # model cold-starting — signal the retry loop
+        raise HfHubHTTPError("HF model loading (503)", response=resp)
+    if resp.status_code >= 400:
         log.error(
             "bge_m3.hf_error",
-            status=exc.response.status_code if exc.response else None,
-            detail=str(exc)[:500],
+            status=resp.status_code,
+            detail=resp.text[:500],
         )
-        raise
-    return _to_vector(raw)
+        raise HfHubHTTPError(f"HF {resp.status_code}", response=resp)
+    return _to_vector(resp.json())
 
 
 def _embed_batch_hf_parallel(texts: list[str]) -> list[list[float]]:

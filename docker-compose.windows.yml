@@ -32,7 +32,7 @@ services:
     environment:
       - discovery.type=single-node
       - bootstrap.memory_lock=true
-      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "OPENSEARCH_JAVA_OPTS=-Xms320m -Xmx320m"
       - DISABLE_SECURITY_PLUGIN=true
       - DISABLE_INSTALL_DEMO_CONFIG=true
     ulimits:
@@ -107,7 +107,7 @@ services:
       celery -A app.workers.celery_app.celery_app worker
       --loglevel=INFO
       --concurrency=1
-      --max-memory-per-child=1500000
+      --max-memory-per-child=3200000
     environment:
       POSTGRES_URL: postgresql+psycopg://postgres:postgres@postgres:5432/assamese_rag
       QDRANT_URL: http://qdrant:6333
@@ -120,8 +120,8 @@ services:
     volumes:
       - .:/app
       - hf_cache:/root/.cache/huggingface
-    mem_limit: 2g
-    memswap_limit: 2g
+    mem_limit: 3500m
+    memswap_limit: 5g
     depends_on:
       postgres:
         condition: service_healthy
@@ -144,6 +144,35 @@ services:
     working_dir: /app
     ports:
       - "8503:8503"
+    depends_on:
+      - api
+
+  # Standalone voice WebSocket server (voice_ws_server.py). Reuses the app image
+  # (ten_vad, numpy, app pkg already baked in). aiohttp/websockets now in
+  # requirements.txt too, so a future rebuild drops the pip-install below.
+  voice:
+    image: localhost/nova-voice-bot_api:latest
+    # ten_vad needs libc++ (LLVM runtime, not in the slim base). The apt line is
+    # dropped once the image is rebuilt from the updated Dockerfile.
+    command: >
+      bash -c "apt-get update -qq && apt-get install -y -qq libc++1 libc++abi1 &&
+      pip install --quiet aiohttp websockets && python voice_ws_server.py"
+    environment:
+      POSTGRES_URL: postgresql+psycopg://postgres:postgres@postgres:5432/assamese_rag
+      QDRANT_URL: http://qdrant:6333
+      OPENSEARCH_URL: http://opensearch:9200
+      REDIS_URL: redis://redis:6379/0
+      RAG_API_URL: http://api:8000/api/v1/chat/text
+      VOICE_WS_HOST: 0.0.0.0
+      VOICE_WS_PORT: "8766"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - .:/app
+    working_dir: /app
+    ports:
+      - "8766:8766"
     depends_on:
       - api
 
