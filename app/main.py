@@ -17,9 +17,13 @@ from app.core.clients import ensure_opensearch_index, ensure_qdrant_collection
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 configure_logging()
 log = get_logger(__name__)
 
+
+from app.ingestion.embedding import _embedding_backend, _load_model
+from app.retrieval.rerank import _use_hf_api as _reranker_uses_hf, _load as _load_reranker
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -33,6 +37,21 @@ async def lifespan(app: FastAPI):
             fn()
         except Exception:  # noqa: BLE001
             log.warning("app.bootstrap_failed", component=name)
+
+    # Pre-load local BGE-M3 so it's warm before the first HF fallback.
+    if _embedding_backend() != "custom_http":
+        try:
+            _load_model()
+        except Exception:  # noqa: BLE001
+            log.warning("app.bootstrap_failed", component="bge_m3_local")
+
+    # Pre-load local BGE-reranker-v2-m3 so it's warm before the first HF fallback.
+    if _reranker_uses_hf():
+        try:
+            _load_reranker()
+        except Exception:  # noqa: BLE001
+            log.warning("app.bootstrap_failed", component="bge_reranker_local")
+
     yield
     log.info("app.shutdown")
 
@@ -69,7 +88,13 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestContextMiddleware)
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8080", "http://127.0.0.1:8080"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=False,
+)
 app.include_router(health.router)
 app.include_router(documents.router)
 app.include_router(chat.router)

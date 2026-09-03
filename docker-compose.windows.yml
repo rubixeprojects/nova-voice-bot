@@ -82,11 +82,13 @@ services:
       QDRANT_URL: http://qdrant:6333
       OPENSEARCH_URL: http://opensearch:9200
       REDIS_URL: redis://redis:6379/0
+      HF_HUB_DISABLE_XET: "1"
     env_file:
       - path: .env
         required: false
     volumes:
       - .:/app
+      - hf_cache:/root/.cache/huggingface
     ports:
       - "8000:8000"
     depends_on:
@@ -111,11 +113,13 @@ services:
       QDRANT_URL: http://qdrant:6333
       OPENSEARCH_URL: http://opensearch:9200
       REDIS_URL: redis://redis:6379/0
+      HF_HUB_DISABLE_XET: "1"
     env_file:
       - path: .env
         required: false
     volumes:
       - .:/app
+      - hf_cache:/root/.cache/huggingface
     mem_limit: 2g
     memswap_limit: 2g
     depends_on:
@@ -147,3 +151,4 @@ volumes:
   pgdata:
   qdrantdata:
   osdata:
+  hf_cache:

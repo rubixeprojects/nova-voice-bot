@@ -96,6 +96,9 @@ def _embedding_backend() -> str:
     return "local"
 
 
+_HF_TIMEOUT_SECONDS = float(os.environ.get("HF_EMBED_TIMEOUT_SECONDS", "18"))
+
+
 def _get_hf_client():
     global _hf_client
     if _hf_client is not None:
@@ -108,10 +111,12 @@ def _get_hf_client():
                 "bge_m3.hf_client",
                 model=_model_id(),
                 provider="hf-inference",
+                timeout=_HF_TIMEOUT_SECONDS,
             )
             _hf_client = InferenceClient(
                 provider="hf-inference",
                 api_key=settings.hf_token,
+                timeout=_HF_TIMEOUT_SECONDS,
             )
     return _hf_client
 
@@ -279,12 +284,22 @@ def _embed_batch_local(texts: list[str]) -> list[list[float]]:
     return [v.tolist() for v in vecs]
 
 
-def _embed_batch(texts: list[str]) -> list[list[float]]:
+def _embed_batch(texts: list[str], *, skip_hf: bool = False, circuit: dict | None = None) -> list[list[float]]:
     backend = _embedding_backend()
-    if backend == "hf_inference":
-        return _embed_batch_hf(texts)
     if backend == "custom_http":
         return _embed_batch_remote(texts)
+    if backend == "hf_inference" and not skip_hf:
+        try:
+            return _embed_batch_hf(texts)
+        except Exception as exc:
+            log.error(
+                "bge_m3.hf_fallback_local",
+                error=str(exc)[:500],
+                error_type=type(exc).__name__,
+            )
+            if circuit is not None:
+                circuit["open"] = True
+            return _embed_batch_local(texts)
     return _embed_batch_local(texts)
 
 
@@ -293,7 +308,6 @@ def embed_texts(
     *,
     batch_size: int | None = None,
 ) -> list[list[float]]:
-    """Return dense embeddings (list of float vectors) for the given texts."""
     if not texts:
         return []
 
@@ -301,10 +315,11 @@ def embed_texts(
     size = max(1, size)
     total = len(texts)
     out: list[list[float]] = []
+    circuit: dict = {"open": False}
 
     for start in range(0, total, size):
         batch = texts[start : start + size]
-        batch_vecs = _embed_batch(batch)
+        batch_vecs = _embed_batch(batch, skip_hf=circuit["open"], circuit=circuit)
         out.extend(batch_vecs)
         if total > size:
             log.info(
@@ -313,6 +328,7 @@ def embed_texts(
                 batch_start=start,
                 batch_size=len(batch),
                 total=total,
+                circuit_open=circuit["open"],
             )
 
     return out
