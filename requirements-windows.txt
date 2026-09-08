@@ -1,0 +1,55 @@
+# Requires Python >=3.11 (matches Dockerfile). Use `docker compose up` or
+# recreate venv: python3.11 -m venv venv && source venv/bin/activate
+#
+# --- Web / API ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+sse-starlette==2.1.3
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
+# --- DB / ORM / migrations ---
+SQLAlchemy==2.0.35
+psycopg[binary]==3.2.13
+alembic==1.13.3
+
+# --- Async jobs ---
+celery==5.4.0
+redis==5.1.1
+
+# --- Vector DB / Search ---
+qdrant-client==1.11.3
+opensearch-py==2.7.1
+
+# --- Object storage ---
+# (removed — raw PDFs are stored in PostgreSQL as bytea)
+
+# --- ML / Embeddings / OCR ---
+# Embeddings + reranker: HF Inference API when HF_TOKEN is set (see embedding.py, rerank.py).
+huggingface_hub>=0.26.0
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.0+cpu
+sentence-transformers==3.3.1
+# Document parsing (P1/P4)
+pymupdf==1.24.10
+pdfplumber==0.11.4
+# PaddleOCR / PP-StructureV3. Assamese/Bengali script support is UNVERIFIED,
+# hence the Sarvam Vision fallback (see app/ingestion/ocr.py).
+paddleocr==2.9.1
+paddlepaddle==2.6.2
+pypdfium2==4.30.0
+Pillow==10.4.0
+
+# --- Utilities ---
+structlog==24.4.0
+httpx==0.27.2
+tenacity==9.0.0
+python-dotenv==1.0.1
+ten-vad @ git+https://github.com/TEN-framework/ten-vad.git
+# Voice WebSocket server (voice_ws_server.py) — standalone asyncio process.
+websockets==13.1
+aiohttp==3.10.10
+
+# --- Tests (optional; used by CI / local pytest) ---
+pytest==8.3.3
