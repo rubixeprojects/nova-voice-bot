@@ -1,9 +1,3 @@
-
-
-Voice client · HTML
- 
- 
-Nova client · HTML
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -22,6 +16,18 @@ Nova client · HTML
     --speaking: #58a6ff;
     --danger: #f85149;
   }
+  [data-theme="light"] {
+    --bg: #f6f8fa;
+    --panel: #ffffff;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --muted: #6e7781;
+    --idle: #6e7781;
+    --listening: #1a7f37;
+    --processing: #9a6700;
+    --speaking: #0969da;
+    --danger: #cf222e;
+  }
   * { box-sizing: border-box; }
   html, body {
     height: 100%;
@@ -38,6 +44,7 @@ Nova client · HTML
     flex-direction: column;
     box-sizing: border-box;
     overflow: hidden;
+    transition: background 0.15s ease, color 0.15s ease;
   }
   .sticky-header {
     flex-shrink: 0;
@@ -115,14 +122,19 @@ Nova client · HTML
   }
   .metric:last-child { border-bottom: none; }
   .metric span:last-child { color: var(--text); }
- 
-  /* ---------- Tabs ---------- */
-  .tabbar {
+
+  /* ---------- Top bar (tabs + theme toggle) ---------- */
+  .topbar {
     flex-shrink: 0;
     display: flex;
-    gap: 6px;
+    align-items: center;
+    justify-content: space-between;
     margin-bottom: 16px;
     border-bottom: 1px solid var(--border);
+  }
+  .tabbar {
+    display: flex;
+    gap: 6px;
   }
   .tab-btn {
     background: transparent;
@@ -136,6 +148,11 @@ Nova client · HTML
   }
   .tab-btn:hover { border-color: transparent; color: var(--text); }
   .tab-btn.active { color: var(--text); border-bottom-color: var(--speaking); }
+  #themeToggleBtn {
+    margin-bottom: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+  }
   .tab-content-wrap {
     flex: 1;
     min-height: 0;
@@ -169,6 +186,11 @@ Nova client · HTML
     border: 1px solid #1f5c3a;
     border-radius: 14px 14px 4px 14px;
     color: var(--text);
+  }
+  [data-theme="light"] .bubble.user {
+    background: #dafbe1;
+    border: 1px solid #aceebb;
+    color: #1f2328;
   }
   .bubble.bot {
     background: var(--panel);
@@ -248,11 +270,14 @@ Nova client · HTML
 </style>
 </head>
 <body>
- 
-<div class="tabbar">
-  <button class="tab-btn active" data-tab="voice" id="tabBtnVoice">🎤 Voice AI</button>
-  <button class="tab-btn" data-tab="chat" id="tabBtnChat">💬 Chat</button>
-  <button class="tab-btn" data-tab="docs" id="tabBtnDocs">📄 Documents</button>
+
+<div class="topbar">
+  <div class="tabbar">
+    <button class="tab-btn active" data-tab="voice" id="tabBtnVoice">🎤 Voice AI</button>
+    <button class="tab-btn" data-tab="chat" id="tabBtnChat">💬 Chat</button>
+    <button class="tab-btn" data-tab="docs" id="tabBtnDocs">📄 Documents</button>
+  </div>
+  <button id="themeToggleBtn" title="Toggle dark/light theme">🌙 Dark</button>
 </div>
  
 <div class="tab-content-wrap">
@@ -338,6 +363,39 @@ Nova client · HTML
  
 </div>
 <!-- /tab-content-wrap -->
+
+<!-- ---------- Theme toggle ---------- -->
+<!-- Applies saved theme immediately (before other scripts run) so there's
+     no flash of the wrong theme, and persists the choice in localStorage
+     (per-browser only — same as the rest of this test client, no server
+     involvement needed for a display preference). -->
+<script>
+(function initTheme() {
+  const THEME_KEY = "nova_theme";
+  const root = document.documentElement;
+  const btn = document.getElementById("themeToggleBtn");
+
+  function applyTheme(theme) {
+    if (theme === "light") {
+      root.setAttribute("data-theme", "light");
+      btn.textContent = "☀️ Light";
+    } else {
+      root.removeAttribute("data-theme");
+      btn.textContent = "🌙 Dark";
+    }
+  }
+
+  const saved = localStorage.getItem(THEME_KEY) || "dark";
+  applyTheme(saved);
+
+  btn.addEventListener("click", () => {
+    const current = root.getAttribute("data-theme") === "light" ? "light" : "dark";
+    const next = current === "light" ? "dark" : "light";
+    localStorage.setItem(THEME_KEY, next);
+    applyTheme(next);
+  });
+})();
+</script>
  
 <script>
 const WS_HOST = window.location.hostname || "localhost";
@@ -603,12 +661,11 @@ document.getElementById("languageSelect").onchange = (e) => {
   const USER_ID = "550e8400-e29b-41d4-a716-446655440000";
  
   // language name -> header code, mirrors LANGUAGES in the streamlit app
-  // (Assamese sends no X-Language header, same as before)
   const LANGUAGES = {
     "English": "en-IN",
     "Hindi": "hi-IN",
     "Kannada": "kn-IN",
-    "Assamese": null,
+    "Assamese": "as-IN",
   };
  
   function headers(extra) {
@@ -906,8 +963,65 @@ document.getElementById("languageSelect").onchange = (e) => {
   renderChat(false);
 })();
 </script>
- 
+
+<!-- ---------- Admin-curated language menu ---------- -->
+<!-- The admin (via /admin) picks which languages users may choose from.
+     On load, both dropdowns here are trimmed down to only that set — users
+     can freely pick among the admin-allowed options, but cannot select
+     anything outside it (the option simply won't exist in the list). The
+     backend independently re-validates every request against the same
+     admin-allowed list, so this is a UI convenience, not the real
+     enforcement boundary. -->
+<script>
+(async function applyAllowedLanguages() {
+  const API_BASE_URL = (window.NOVA_API_BASE_URL) || "http://localhost:8000";
+
+  // Maps the short code from the admin API to each dropdown's own value format.
+  const TO_VOICE_SELECT = { as: "as-IN", en: "en-IN", hi: "hi-IN", kn: "kn-IN", bn: "bn-IN" };
+  const TO_CHAT_SELECT = { as: "Assamese", en: "English", hi: "Hindi", kn: "Kannada", bn: "Bengali" };
+
+  function trimOptions(select, keepValues) {
+    if (!select) return;
+    const keepSet = new Set(keepValues.filter(Boolean));
+    let sawSelected = false;
+    Array.from(select.options).forEach((opt) => {
+      const keep = keepSet.has(opt.value);
+      opt.hidden = !keep;
+      opt.disabled = !keep;
+      if (keep && opt.value === select.value) sawSelected = true;
+    });
+    // If the dropdown's current selection is no longer allowed, jump to
+    // the first still-allowed option so the UI never sits on a stale pick.
+    if (!sawSelected) {
+      const firstAllowed = Array.from(select.options).find((o) => !o.disabled);
+      if (firstAllowed) {
+        select.value = firstAllowed.value;
+        select.dispatchEvent(new Event("change"));
+      }
+    }
+  }
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/v1/admin/languages`);
+    const data = await res.json();
+    const allowed = data.allowed_languages || []; // e.g. ["as", "hi"]
+
+    trimOptions(
+      document.getElementById("languageSelect"),
+      allowed.map((c) => TO_VOICE_SELECT[c])
+    );
+    trimOptions(
+      document.getElementById("chatLanguageSelect"),
+      allowed.map((c) => TO_CHAT_SELECT[c])
+    );
+  } catch (e) {
+    // If the admin endpoint is unreachable, leave the dropdowns as-is
+    // (full list, unfiltered) — the backend still enforces on every
+    // request regardless of what the UI shows.
+    console.warn("Could not load admin-allowed languages:", e);
+  }
+})();
+</script>
+
 </body>
 </html>
- 
- 

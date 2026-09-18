@@ -1,6 +1,5 @@
 ﻿"""Bilingual prompt construction for sarvam-105b."""
 from __future__ import annotations
-
 from pathlib import Path
 
 import yaml
@@ -40,9 +39,20 @@ SYSTEM_PROMPT = (
     "shared prefix each time — say it once, then list the differences (e.g. 'Master of Arts in History, Bengali, "
     "and Sanskrit'). Apply this same grouping instinct to any kind of list, not just academic degrees.\n"
     "Default to a short, spoken-style summary rather than an exhaustive list — mention a few representative "
-    "examples and offer to give the full list only if the user asks for it. Only give the complete, exhaustive "
-    "list when the user explicitly asks for 'all', 'the full list', or similar.\n"
+    "examples and offer to give the full list only if the user asks for it. However, if the user's question "
+    "contains the word 'all', 'every', 'full list', 'complete list', or states a specific count (e.g. 'all 29', "
+    "'list all X'), you MUST give the complete, exhaustive list immediately — do not give a partial summary and "
+    "do not ask if they want the full list, they already asked for it.\n"
     "For document-based answers cite sources with [S#] markers; skip citations for casual conversation.\n"
+    "Each [S#] marker in the reference material is followed by the actual source filename - when asked which document or file something came from, use that real filename, never invent or guess one.\n"
+        "When listing or enumerating items from the reference material, combine list items from ALL provided source "
+    "chunks into one complete list — a list is often split across multiple [S#] chunks, and a chunk with no "
+    "heading or introductory sentence is usually a direct continuation of a list started in an earlier chunk, "
+    "not a separate or untrustworthy source. Only exclude a specific line if its content is clearly a different "
+    "kind of item from the rest of the list — for example, if every other entry follows one shared naming or "
+    "structural pattern and this line breaks that pattern. If the user states an expected count (e.g. 'list all "
+    "29 X'), count your final combined list against it and mention explicitly if it doesn't match, rather than "
+    "silently padding or trimming to fit.\n"
     "If a question is completely outside your domain, say so briefly and offer to help with something relevant."
 )
 
@@ -52,7 +62,8 @@ def build_context_block(chunks: list[RetrievedChunk]) -> str:
         text = c.payload.get("expanded_text") or c.text
         title = c.section_title or ""
         page = f"p.{c.page_number}" if c.page_number is not None else ""
-        header = f"[S{i}]" + (f" {title}" if title else "") + (f" ({page})" if page else "")
+        source_file = c.payload.get("source_file") or ""
+        header = f"[S{i}]" + (f" {source_file}" if source_file else "") + (f" {title}" if title else "") + (f" ({page})" if page else "")
         lines.append(f"{header}\n{text}")
     return "\n\n".join(lines)
 

@@ -6,6 +6,7 @@ from app.models.tables import (
     Document,
     Message,
     PipelineStageLog,
+    SystemSetting,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "Message",
     "ApiRequestLog",
     "PipelineStageLog",
+    "SystemSetting",
 ]

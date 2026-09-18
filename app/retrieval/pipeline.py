@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-
+import re
+from app.core.clients import get_qdrant
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.stage_logger import astage, record_stage_async
@@ -19,7 +20,73 @@ from app.retriever.debug import log_retrieval_trace
 from app.retriever.mmr import maximal_marginal_relevance
 
 log = get_logger(__name__)
+def _expand_split_lists(reranked: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    """If a chunk states a count like '29 MOOCs' or '12 courses', follow its
+    next_chunk_id chain in Qdrant to pull in any sibling chunks that continue
+    the same list but scored too low to be reranked in on their own. Generic —
+    no hardcoded numbers, phrases, or document names."""
+    count_pattern = re.compile(r"\b(\d+)\b.{0,60}?\b([A-Za-z]+s)\b")
 
+    existing_ids = {c.chunk_id for c in reranked}
+    to_add: list[RetrievedChunk] = []
+    client = get_qdrant()
+
+    for chunk in reranked:
+        match = count_pattern.search(chunk.text)
+        if not match:
+            continue
+        stated_count = int(match.group(1))
+
+        # Walk forward through the chunk chain, collecting siblings.
+        next_id = chunk.next_chunk_id
+        collected_items = 0
+        hops = 0
+        while next_id and hops < 10:  # safety cap, not a real limit in practice
+            hops += 1
+            if next_id in existing_ids:
+                break  # already in reranked set, chain likely already covered
+            points = client.retrieve(
+                collection_name=settings.qdrant_collection,
+                ids=[str(next_id)],
+                with_payload=True,
+            )
+            if not points:
+                break
+            p = points[0].payload or {}
+            text = p.get("text", "")
+
+            # Rough line-count as a stand-in for "items in this chunk".
+            # Try common separators in order: bullets/newlines first, then
+            # double-space (seen in this corpus), falling back to single lines.
+            lines = [l.strip() for l in re.split(r"\n|•|▪|\u2022|\uf0b7", text) if l.strip()]
+            if len(lines) <= 1:
+                lines = [l.strip() for l in text.split("  ") if l.strip()]
+            if len(lines) <= 1:
+                lines = [text.strip()] if text.strip() else []
+            collected_items += max(len(lines), 1)
+
+            new_chunk = RetrievedChunk(
+                chunk_id=uuid.UUID(str(p.get("chunk_id") or next_id)),
+                document_id=uuid.UUID(str(p.get("document_id"))) if p.get("document_id") else None,
+                text=text,
+                score=chunk.score,  # inherit parent's relevance, it's part of the same list
+                chunk_index=p.get("chunk_index"),
+                section_id=uuid.UUID(str(p["section_id"])) if p.get("section_id") else None,
+                section_title=p.get("section_title"),
+                page_number=p.get("page_start") or p.get("page_number"),
+                prev_chunk_id=uuid.UUID(str(p["prev_chunk_id"])) if p.get("prev_chunk_id") else None,
+                next_chunk_id=uuid.UUID(str(p["next_chunk_id"])) if p.get("next_chunk_id") else None,
+                source="list_chain_expansion",
+                payload=p,
+            )
+            to_add.append(new_chunk)
+            existing_ids.add(new_chunk.chunk_id)
+
+            if collected_items >= stated_count:
+                break
+            next_id = new_chunk.next_chunk_id
+
+    return reranked + to_add
 
 async def retrieve(
     db,
@@ -93,6 +160,7 @@ async def retrieve(
         )
         st.output({"kept": len(reranked)})
 
+    reranked = _expand_split_lists(reranked)
     async with astage(db, "context_build", component="prompt_builder",
                       conversation_id=conversation_id, request_id=request_id) as st:
         final = await asyncio.to_thread(build_context, reranked)

@@ -67,8 +67,8 @@ class Settings(BaseSettings):
     mmr_top_k: int = 20
     mmr_lambda: float = 0.7
     rerank_input_top_k: int = 20
-    rerank_top_k: int = 5
-    context_max_tokens: int = 3000
+    rerank_top_k: int = 12
+    context_max_tokens: int = 6000
     conversation_memory_turns: int = 6
     debug_retrieval: bool = False
 
@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     max_upload_mb: int = 50
     universal_user_id: str
+    admin_password: str = ""
 
 
 @lru_cache

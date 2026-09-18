@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Nova Admin</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --text:#e8e8ea; --muted:#8a8f98; --accent:#4f8cff; --ok:#2ecc71; --err:#e74c3c; }
+  body { background:var(--bg); color:var(--text); font-family:system-ui,sans-serif; display:flex; justify-content:center; padding:60px 20px; }
+  .card { background:var(--panel); border-radius:12px; padding:32px; width:380px; box-shadow:0 4px 24px rgba(0,0,0,0.4); }
+  h1 { font-size:18px; margin:0 0 24px; }
+  label { display:block; font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:6px; margin-top:18px; }
+  input[type="password"] { width:100%; padding:10px; border-radius:8px; border:1px solid #2a2e38; background:#0f1115; color:var(--text); font-size:14px; box-sizing:border-box; }
+  button { margin-top:24px; width:100%; padding:12px; border:none; border-radius:8px; background:var(--accent); color:white; font-size:14px; font-weight:600; cursor:pointer; }
+  button:hover { opacity:0.9; }
+  button.logout { background:#2a2e38; margin-top:10px; }
+  #status, #loginStatus { margin-top:16px; font-size:13px; min-height:18px; }
+  .ok { color:var(--ok); }
+  .err { color:var(--err); }
+  #current { font-size:13px; color:var(--muted); margin-top:4px; margin-bottom:8px; }
+  #panel { display:none; }
+  .checkbox-list { margin-top:8px; }
+  .checkbox-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid #22252e; }
+  .checkbox-row:last-child { border-bottom:none; }
+  .checkbox-row input[type="checkbox"] { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
+  .checkbox-row label { margin:0; text-transform:none; font-size:14px; color:var(--text); cursor:pointer; letter-spacing:0; }
+</style>
+</head>
+<body>
+
+<!-- Login screen -->
+<div class="card" id="loginCard">
+  <h1>Nova Admin &mdash; Login</h1>
+  <label for="loginPassword">Admin Password</label>
+  <input type="password" id="loginPassword" placeholder="Enter admin password"
+         onkeydown="if(event.key==='Enter') login()" />
+  <button onclick="login()">Log in</button>
+  <div id="loginStatus"></div>
+</div>
+
+<!-- Allowed-languages panel (hidden until logged in) -->
+<div class="card" id="panel">
+  <h1>Nova &mdash; Allowed Languages</h1>
+  <div id="current">Loading current selection&hellip;</div>
+
+  <label>Select the languages users may choose from</label>
+  <div class="checkbox-list" id="checkboxList">
+    <div class="checkbox-row"><input type="checkbox" id="lang-as" value="as"><label for="lang-as">Assamese</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="lang-en" value="en"><label for="lang-en">English</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="lang-hi" value="hi"><label for="lang-hi">Hindi</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="lang-kn" value="kn"><label for="lang-kn">Kannada</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="lang-bn" value="bn"><label for="lang-bn">Bengali</label></div>
+  </div>
+
+  <button onclick="saveLanguages()">Save</button>
+  <button class="logout" onclick="logout()">Log out</button>
+  <div id="status"></div>
+</div>
+
+<script>
+// Password lives only in this tab's sessionStorage — cleared when the tab closes.
+// It is sent per-request as a header; the server is the real gatekeeper (the
+// backend re-checks it on every POST), this is just to avoid re-typing it
+// for every save within the same admin session.
+const SESSION_KEY = 'nova_admin_pw';
+const ALL_CODES = ['as', 'en', 'hi', 'kn', 'bn'];
+
+function getStoredPassword() {
+  return sessionStorage.getItem(SESSION_KEY);
+}
+
+function getCheckedLanguages() {
+  return ALL_CODES.filter(code => document.getElementById('lang-' + code).checked);
+}
+
+function setCheckedLanguages(codes) {
+  ALL_CODES.forEach(code => {
+    document.getElementById('lang-' + code).checked = codes.includes(code);
+  });
+}
+
+async function login() {
+  const pw = document.getElementById('loginPassword').value;
+  const statusEl = document.getElementById('loginStatus');
+  statusEl.textContent = 'Checking...';
+  statusEl.className = '';
+
+  // Verify the password against the server by attempting a harmless
+  // re-save of the currently allowed languages.
+  try {
+    const cur = await fetch('/api/v1/admin/languages');
+    const curData = await cur.json();
+    const check = await fetch('/api/v1/admin/languages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
+      body: JSON.stringify({ languages: curData.allowed_languages })
+    });
+    if (!check.ok) {
+      const data = await check.json().catch(() => ({}));
+      statusEl.textContent = data.detail || 'Login failed.';
+      statusEl.className = 'err';
+      return;
+    }
+    sessionStorage.setItem(SESSION_KEY, pw);
+    showPanel();
+  } catch (e) {
+    statusEl.textContent = 'Network error.';
+    statusEl.className = 'err';
+  }
+}
+
+function logout() {
+  sessionStorage.removeItem(SESSION_KEY);
+  document.getElementById('loginCard').style.display = 'block';
+  document.getElementById('panel').style.display = 'none';
+  document.getElementById('loginPassword').value = '';
+}
+
+function showPanel() {
+  document.getElementById('loginCard').style.display = 'none';
+  document.getElementById('panel').style.display = 'block';
+  loadCurrent();
+}
+
+async function loadCurrent() {
+  try {
+    const res = await fetch('/api/v1/admin/languages');
+    const data = await res.json();
+    document.getElementById('current').textContent =
+      'Currently allowed: ' + data.allowed_languages.join(', ');
+    setCheckedLanguages(data.allowed_languages);
+  } catch (e) {
+    document.getElementById('current').textContent = 'Could not load current selection.';
+  }
+}
+
+async function saveLanguages() {
+  const password = getStoredPassword();
+  const languages = getCheckedLanguages();
+  const statusEl = document.getElementById('status');
+
+  if (languages.length === 0) {
+    statusEl.textContent = 'Select at least one language.';
+    statusEl.className = 'err';
+    return;
+  }
+
+  statusEl.textContent = 'Saving...';
+  statusEl.className = '';
+
+  try {
+    const res = await fetch('/api/v1/admin/languages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
+      body: JSON.stringify({ languages })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      statusEl.textContent = data.detail || 'Failed to save.';
+      statusEl.className = 'err';
+      if (res.status === 401) logout(); // stale/invalid session password
+      return;
+    }
+    statusEl.textContent = 'Saved. Allowed languages: ' + data.allowed_languages.join(', ');
+    statusEl.className = 'ok';
+    loadCurrent();
+  } catch (e) {
+    statusEl.textContent = 'Network error.';
+    statusEl.className = 'err';
+  }
+}
+
+// Auto-resume session if this tab already logged in earlier.
+if (getStoredPassword()) {
+  showPanel();
+}
+</script>
+</body>
+</html>

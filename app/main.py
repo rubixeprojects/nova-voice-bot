@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse
 
-from app.api import chat, conversations, documents, health
+from app.api import admin, chat, conversations, documents, health
 from app.core.clients import ensure_opensearch_index, ensure_qdrant_collection
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
@@ -105,7 +105,7 @@ app.include_router(health.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)
-
+app.include_router(admin.router)
 
 _PUBLIC_OPENAPI_PATHS = {
     "/",
@@ -151,3 +151,7 @@ async def stt_test():
 async def voice_client():
     """Combined chat + voice test client (talks to this API + ws://<host>:8766)."""
     return FileResponse("app/static/voice_client.html")
+@app.get("/admin", include_in_schema=False)
+async def admin_panel():
+    """Admin-only page to view/set the system-wide active language."""
+    return FileResponse("app/static/admin.html")

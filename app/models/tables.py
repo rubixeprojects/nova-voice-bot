@@ -211,3 +211,15 @@ class PipelineStageLog(Base):
         Index("idx_pipeline_stage_logs_request_id", "request_id"),
         Index("idx_pipeline_stage_logs_document_id", "document_id"),
     )
+    
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sa_text("now()"),
+        onupdate=sa_text("now()"),
+        nullable=False,
+    )

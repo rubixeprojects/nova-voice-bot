@@ -157,7 +157,9 @@ services:
   # (ten_vad, numpy, app pkg already baked in). aiohttp/websockets now in
   # requirements.txt too, so a future rebuild drops the pip-install below.
   voice:
-    image: localhost/nova-voice-bot_api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.windows
     # ten_vad needs libc++ (LLVM runtime, not in the slim base). The apt line is
     # dropped once the image is rebuilt from the updated Dockerfile.
     command: >

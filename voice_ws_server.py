@@ -195,6 +195,28 @@ def strip_source_markers(text: str) -> str:
     text = re.sub(r"\[\s*\]", "", text)
     return text.strip()
 
+
+HEADER_TO_SHORT = {"as-IN": "as", "en-IN": "en", "hi-IN": "hi", "kn-IN": "kn", "bn-IN": "bn"}
+SHORT_TO_HEADER = {v: k for k, v in HEADER_TO_SHORT.items()}
+
+
+async def fetch_allowed_languages() -> list[str]:
+    """Ask the API for the admin-curated list of allowed languages
+    (short codes like ['as', 'hi']). Falls back to English-only if the
+    API is unreachable."""
+    admin_url = VoiceConfig.RAG_API_URL.replace("/chat/text", "/admin/languages")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(admin_url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                codes = data.get("allowed_languages") or []
+                return codes or ["en"]
+    except Exception as e:
+        logger.warning(f"Could not fetch allowed languages from admin API, defaulting to ['en']: {e}")
+        return ["en"]
+
+
 class InterruptController:
     def __init__(self):
         self.turn_id = 0
@@ -289,10 +311,19 @@ class VoiceSession:
         try:
             logger.info(f"Turn {expected_turn_id}: Processing {len(pcm_data)} bytes of audio")
             # 1. STT
+            
+            transcript = stt_res.get("transcript", "").strip()
+            # Resolve against the admin-allowed list: honor whatever the
+            # client last selected via set_language, but only if it's still
+            # in the admin's allowed set — otherwise fall back to the first
+            # allowed language. Re-checked every turn, so an admin change
+            # takes effect on the very next utterance.
+            allowed = await fetch_allowed_languages()
+            requested_short = HEADER_TO_SHORT.get(self.selected_language)
+            chosen_short = requested_short if requested_short in allowed else allowed[0]
+            self.selected_language = SHORT_TO_HEADER.get(chosen_short, "en-IN")
             wav_data = pcm_to_wav(pcm_data)
             stt_res = await transcribe(wav_data, language_code=self.selected_language)
-            transcript = stt_res.get("transcript", "").strip()
-
             if not transcript:
                 self.state = "LISTENING"
                 await self.send_state()
@@ -423,9 +454,13 @@ async def ws_handler(websocket):
                         session.playback_done_event.set()
                     elif data.get("type") == "cmd" and data.get("name") == "set_language":
                         new_lang = data.get("language")
-                        if new_lang in ("en-IN", "hi-IN", "as-IN", "kn-IN"):
+                        if new_lang in ("en-IN", "hi-IN", "as-IN", "kn-IN", "bn-IN"):
                             session.selected_language = new_lang
-                            logger.info(f"Language pinned to: {new_lang}")
+                            logger.info(f"Client requested language: {new_lang}")
+                            # Actual enforcement against the admin-allowed
+                            # list happens in process_pipeline() on next use.
+                        else:
+                            logger.info(f"Ignored invalid set_language request: {new_lang}")
                 except Exception as e:
                     logger.error(f"Error parsing message: {e}")
     except websockets.exceptions.ConnectionClosed:
