@@ -81,7 +81,7 @@ def ingest_document(
             with stage(db, "parse", component="document_router", document_id=doc_uuid,
                        request_id=job_request_id) as st:
                 st.input({"bytes": len(raw)})
-                artifacts = run_ingestion_pipeline(raw)
+                artifacts = run_ingestion_pipeline(raw, filename=doc.original_filename or "")
                 st.output({
                     "document_type": artifacts.profile.document_type,
                     "pages": len(artifacts.pages),

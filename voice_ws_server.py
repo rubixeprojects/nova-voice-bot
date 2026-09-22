@@ -311,8 +311,6 @@ class VoiceSession:
         try:
             logger.info(f"Turn {expected_turn_id}: Processing {len(pcm_data)} bytes of audio")
             # 1. STT
-            
-            transcript = stt_res.get("transcript", "").strip()
             # Resolve against the admin-allowed list: honor whatever the
             # client last selected via set_language, but only if it's still
             # in the admin's allowed set — otherwise fall back to the first
@@ -324,6 +322,7 @@ class VoiceSession:
             self.selected_language = SHORT_TO_HEADER.get(chosen_short, "en-IN")
             wav_data = pcm_to_wav(pcm_data)
             stt_res = await transcribe(wav_data, language_code=self.selected_language)
+            transcript = stt_res.get("transcript", "").strip()
             if not transcript:
                 self.state = "LISTENING"
                 await self.send_state()
@@ -353,7 +352,7 @@ class VoiceSession:
                 if not clean_text:
                     return
                 logger.info(f"Turn {expected_turn_id}: TTS for: {text}")
-                tts_wav = await text_to_speech(text, lang_code)
+                tts_wav = await text_to_speech(clean_text, lang_code)
                 if self.interrupt_ctrl.turn_id != expected_turn_id:
                     return
                 total_audio_seconds += wav_duration_seconds(tts_wav)

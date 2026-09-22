@@ -18,6 +18,7 @@ from app.ingestion.ocr import run_ocr
 from app.layout.blocks import classify_blocks
 from app.layout.sections import detect_sections
 from app.parser.router import detect_profile, pages_from_ocr, parse_document
+from app.parser.other_formats import pages_from_docx, pages_from_plaintext
 from app.pipeline.types import ChunkDraft, DocumentProfile, ParsedPage
 
 log = get_logger(__name__)
@@ -68,20 +69,41 @@ def _merge_parsed_with_ocr(
     return out
 
 
-def run_ingestion_pipeline(pdf_bytes: bytes) -> IngestArtifacts:
-    profile, parsed = parse_document(pdf_bytes)
-    ocr_result = run_ocr(pdf_bytes)
-    ocr_pages = [(p.page_number, p.text, p.confidence) for p in ocr_result.pages]
-    page_conf = {p.page_number: p.confidence for p in ocr_result.pages}
-
-    if profile.document_type in ("scanned_pdf", "mixed") or profile.avg_indic_ratio < 0.12:
-        pages = pages_from_ocr(ocr_pages, engine="ocr_merged")
-        # Prefer pymupdf where strong
-        if parsed:
-            pages = _merge_parsed_with_ocr(parsed, ocr_pages)
+def run_ingestion_pipeline(file_bytes: bytes, filename: str = "") -> IngestArtifacts:
+    ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else "pdf"
+    page_conf: dict[int, float] = {}
+    if ext == "docx":
+        pages = pages_from_docx(file_bytes)
+        profile = DocumentProfile(
+            document_type="docx",
+            has_bookmarks=False,
+            has_tables=any(b.block_type == "table" for p in pages for b in (p.blocks or [])),
+            avg_indic_ratio=pages[0].indic_ratio if pages else 0.0,
+            page_count=1,
+        )
+    elif ext in ("txt", "md", "markdown"):
+        pages = pages_from_plaintext(file_bytes, is_markdown=(ext != "txt"))
+        profile = DocumentProfile(
+            document_type="markdown" if ext != "txt" else "text",
+            has_bookmarks=False,
+            has_tables=False,
+            avg_indic_ratio=pages[0].indic_ratio if pages else 0.0,
+            page_count=1,
+        )
     else:
-        pages = _merge_parsed_with_ocr(parsed, ocr_pages) if parsed else pages_from_ocr(ocr_pages)
+        # --- PDF path: completely unchanged from before ---
+        pdf_bytes = file_bytes
+        profile, parsed = parse_document(pdf_bytes)
+        ocr_result = run_ocr(pdf_bytes)
+        ocr_pages = [(p.page_number, p.text, p.confidence) for p in ocr_result.pages]
+        page_conf = {p.page_number: p.confidence for p in ocr_result.pages}
 
+        if profile.document_type in ("scanned_pdf", "mixed") or profile.avg_indic_ratio < 0.12:
+            pages = pages_from_ocr(ocr_pages, engine="ocr_merged")
+            if parsed:
+                pages = _merge_parsed_with_ocr(parsed, ocr_pages)
+        else:
+            pages = _merge_parsed_with_ocr(parsed, ocr_pages) if parsed else pages_from_ocr(ocr_pages)
     pages = strip_headers_footers(pages)
     pages = classify_blocks(pages)
     sections = detect_sections(pages)

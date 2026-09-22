@@ -54,6 +54,15 @@ async def upload_document(
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    ALLOWED_EXTENSIONS = {"pdf", "docx", "txt", "md", "markdown"}
+    filename = file.filename or ""
+    ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: .{ext}. Allowed: pdf, docx, txt, md",
+        )
+
     data = await file.read()
     max_bytes = settings.max_upload_mb * 1024 * 1024
     if len(data) > max_bytes:
