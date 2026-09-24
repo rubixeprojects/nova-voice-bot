@@ -13,9 +13,11 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal, get_db
-from app.core.deps import get_current_user_id, get_request_id_dep
+from app.core.deps import get_current_user_id
+from app.core.system_settings import resolve_response_language_code
 from app.core.logging import get_logger
 from app.llm import sarvam_client
+from app.llm.postprocess import reconcile_list_count
 from app.cleaner.unicode import detect_query_language
 from app.llm.prompts import build_messages
 from app.models import Conversation, Document, Message
@@ -158,29 +160,34 @@ async def _persist_turn(
 async def chat_text(
     body: ChatTextRequest,
     user_id: uuid.UUID = Depends(get_current_user_id),
-    request_id: str = Depends(get_request_id_dep),
     db: AsyncSession = Depends(get_db),
     x_language: str | None = Header(default=None),
 ):
     started = time.perf_counter()
+    request_id = str(uuid.uuid4())
     conv = await _get_or_create_conversation(
         db, body.conversation_id, user_id, body.message
     )
     _cleaned, chunks = await retrieve(
         db, body.message, user_id,
         document_ids=body.document_ids,
-        conversation_id=conv.id, request_id=request_id,
+        conversation_id=conv.id,
     )
     history = await _load_history(db, conv.id, settings.conversation_memory_turns)
-    query_lang = x_language if x_language else detect_query_language(body.message)
+    # The user's dropdown selection (X-Language header) is honored only if
+    # it's in the admin-allowed list; otherwise falls back to the first
+    # allowed language. Either way, the message's own detected language is
+    # ignored — the reply always matches the resolved selection.
+    query_lang = await resolve_response_language_code(db, x_language)
     messages = build_messages(
         body.message, chunks, history,
         query_language=query_lang,
     )
 
     answer = await sarvam_client.chat_completion(
-        messages, db=db, conversation_id=conv.id, request_id=request_id
+        messages, db=db, conversation_id=conv.id
     )
+    answer = reconcile_list_count(answer)
     latency_ms = int((time.perf_counter() - started) * 1000)
 
     name_map = await _doc_name_map(db, chunks)
@@ -202,11 +209,11 @@ async def chat_text(
 async def chat_text_stream(
     body: ChatTextRequest,
     user_id: uuid.UUID = Depends(get_current_user_id),
-    request_id: str = Depends(get_request_id_dep),
     x_language: str | None = Header(default=None),
 ):
     async def event_gen():
         started = time.perf_counter()
+        request_id = str(uuid.uuid4())
         # Own the session for the whole stream lifetime.
         async with AsyncSessionLocal() as db:
             try:
@@ -219,24 +226,26 @@ async def chat_text_stream(
                 _cleaned, chunks = await retrieve(
                     db, body.message, user_id,
                     document_ids=body.document_ids,
-                    conversation_id=conv.id, request_id=request_id,
+                    conversation_id=conv.id, 
                 )
                 history = await _load_history(
                     db, conv.id, settings.conversation_memory_turns
                 )
+                # Same resolution as the non-streaming endpoint.
+                query_lang = await resolve_response_language_code(db, x_language)
                 messages = build_messages(
                     body.message, chunks, history,
-                    query_language=x_language if x_language else detect_query_language(body.message),
+                    query_language=query_lang,
                 )
-
                 answer_parts: list[str] = []
                 async for delta in sarvam_client.chat_completion_stream(
-                    messages, db=db, conversation_id=conv.id, request_id=request_id
+                    messages, db=db, conversation_id=conv.id
                 ):
                     answer_parts.append(delta)
                     yield {"event": "token", "data": json.dumps({"delta": delta})}
 
                 answer = "".join(answer_parts)
+                answer = reconcile_list_count(answer)
                 latency_ms = int((time.perf_counter() - started) * 1000)
                 name_map = await _doc_name_map(db, chunks)
                 await _persist_turn(
@@ -274,10 +283,11 @@ async def chat_voice(
         default=None, description="JSON array of document UUIDs"
     ),
     user_id: uuid.UUID = Depends(get_current_user_id),
-    request_id: str = Depends(get_request_id_dep),
     db: AsyncSession = Depends(get_db),
+    x_language: str | None = Header(default=None),
 ):
     started = time.perf_counter()
+    request_id = str(uuid.uuid4())
     audio = await file.read()
     if not audio:
         raise HTTPException(status_code=400, detail="Empty audio file")
@@ -295,7 +305,7 @@ async def chat_voice(
         content_type=file.content_type or "audio/wav",
         db=db,
         conversation_id=conv.id,
-        request_id=request_id,
+        
     )
 
     transcript = stt["transcript"]
@@ -351,16 +361,12 @@ async def chat_voice(
             audio_base64="",
         )
 
-    language_code = (
-        stt.get("language_code") or "en-IN"
-    )
-
-    if language_code not in {"en-IN", "kn-IN"}:
-        language_code = "en-IN"
+    # Resolve against the admin-allowed list, same as the text endpoints.
+    language_code = await resolve_response_language_code(db, x_language)
     intent = await sarvam_client.route_query(
         transcript,
         db=db,
-        request_id=request_id,
+       
     )
 
 
@@ -378,7 +384,7 @@ async def chat_voice(
             user_id,
             document_ids=doc_ids,
             conversation_id=conv.id,
-            request_id=request_id,
+            
         )
     else:
         chunks = []
@@ -390,8 +396,9 @@ async def chat_voice(
         query_language=language_code,
     )
     answer = await sarvam_client.chat_completion(
-        messages, db=db, conversation_id=conv.id, request_id=request_id
+        messages, db=db, conversation_id=conv.id
     )
+    answer = reconcile_list_count(answer)
     audio_answer = await sarvam_client.text_to_speech(
         text=answer,
         language_code=language_code,
@@ -422,7 +429,7 @@ async def chat_voice_stream(
     conversation_id: uuid.UUID | None = Form(default=None),
     document_ids: str | None = Form(default=None),
     user_id: uuid.UUID = Depends(get_current_user_id),
-    request_id: str = Depends(get_request_id_dep),
+    x_language: str | None = Header(default=None),
 ):
     audio = await file.read()
 
@@ -438,6 +445,7 @@ async def chat_voice_stream(
 
     async def event_gen():
         started = time.perf_counter()
+        request_id = str(uuid.uuid4())
 
         async with AsyncSessionLocal() as db:
             try:
@@ -469,15 +477,13 @@ async def chat_voice_stream(
                     content_type=content_type,
                     db=db,
                     conversation_id=conv.id,
-                    request_id=request_id,
+                    
                 )
 
                 transcript = stt["transcript"]
 
-                language_code = stt.get("language_code") or "en-IN"
-
-                if language_code not in {"en-IN", "kn-IN"}:
-                    language_code = "en-IN"
+                # Resolve against the admin-allowed list, same as the text endpoints.
+                language_code = await resolve_response_language_code(db, x_language)
 
                 log.info(
                     "voice.language_detected",
@@ -513,7 +519,7 @@ async def chat_voice_stream(
                 intent = await sarvam_client.route_query(
                     transcript,
                     db=db,
-                    request_id=request_id,
+                    
                 )
 
                 log.info(
@@ -542,7 +548,7 @@ async def chat_voice_stream(
                         user_id,
                         document_ids=doc_ids,
                         conversation_id=conv.id,
-                        request_id=request_id,
+                        
                     )
                 else:
                     chunks = []
@@ -568,7 +574,7 @@ async def chat_voice_stream(
                     messages,
                     db=db,
                     conversation_id=conv.id,
-                    request_id=request_id,
+                    
                 ):
                     answer_parts.append(delta)
 
@@ -582,10 +588,8 @@ async def chat_voice_stream(
                     }
 
                 answer = "".join(answer_parts)
-
-                latency_ms = int(
-                    (time.perf_counter() - started) * 1000
-                )
+                answer = reconcile_list_count(answer)
+                latency_ms = int((time.perf_counter() - started) * 1000)
 
                 # ---------------------------------------------------------
                 # Persist conversation
@@ -663,9 +667,9 @@ async def chat_voice_stream(
 async def transcribe_voice(
     file: UploadFile = File(...),
     user_id: uuid.UUID = Depends(get_current_user_id),
-    request_id: str = Depends(get_request_id_dep),
     db: AsyncSession = Depends(get_db),
 ):
+    request_id = str(uuid.uuid4())
     audio = await file.read()
 
     if not audio:
@@ -679,7 +683,7 @@ async def transcribe_voice(
         filename=file.filename or "recording.webm",
         content_type=file.content_type or "audio/webm",
         db=db,
-        request_id=request_id,
+        
     )
 
     transcript = result.get("transcript", "")

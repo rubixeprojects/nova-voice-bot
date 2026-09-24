@@ -4,29 +4,18 @@ The middleware already enforces presence; these just surface typed values to
 handlers and keep OpenAPI/Swagger documenting the required headers.
 """
 from __future__ import annotations
-
 import uuid
+from app.core.config import settings
+from fastapi import HTTPException
 
-from fastapi import Header, HTTPException, Request
 
-
-async def get_current_user_id(
-    request: Request,
-    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
-) -> uuid.UUID:
-    value = x_user_id or getattr(request.state, "user_id", None)
-    if not value:
-        raise HTTPException(status_code=401, detail="Missing required header: X-User-Id")
+async def get_current_user_id() -> uuid.UUID:
     try:
-        return uuid.UUID(value)
+        return uuid.UUID(settings.universal_user_id)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail="X-User-Id must be a UUID") from exc
+        raise HTTPException(
+            status_code=500,
+            detail="UNIVERSAL_USER_ID must be a valid UUID",
+        ) from exc
 
 
-async def get_request_id_dep(
-    request: Request,
-    x_request_id: str | None = Header(default=None, alias="X-Request-Id"),
-) -> str:
-    return getattr(request.state, "request_id", None) or x_request_id or str(
-        uuid.uuid4()
-    )

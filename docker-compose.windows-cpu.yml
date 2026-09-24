@@ -5,7 +5,6 @@
 services:
   postgres:
     image: docker.io/postgres:16
-    command: ["postgres", "-c", "tcp_keepalives_idle=30", "-c", "tcp_keepalives_interval=10", "-c", "tcp_keepalives_count=3"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -61,7 +60,9 @@ services:
       - "6379:6379"
 
   migrate:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.windows
     command: alembic upgrade head
     environment:
       POSTGRES_URL: postgresql+psycopg://postgres:postgres@postgres:5432/assamese_rag
@@ -76,7 +77,9 @@ services:
         condition: service_healthy
 
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.windows
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment:
       POSTGRES_URL: postgresql+psycopg://postgres:postgres@postgres:5432/assamese_rag
@@ -84,8 +87,6 @@ services:
       OPENSEARCH_URL: http://opensearch:9200
       REDIS_URL: redis://redis:6379/0
       HF_HUB_DISABLE_XET: "1"
-      OMP_NUM_THREADS: "2"
-      MKL_NUM_THREADS: "2"
     env_file:
       - path: .env
         required: false
@@ -105,7 +106,9 @@ services:
         condition: service_started
 
   worker:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.windows
     command: >
       celery -A app.workers.celery_app.celery_app worker
       --loglevel=INFO
@@ -117,8 +120,6 @@ services:
       OPENSEARCH_URL: http://opensearch:9200
       REDIS_URL: redis://redis:6379/0
       HF_HUB_DISABLE_XET: "1"
-      OMP_NUM_THREADS: "2"
-      MKL_NUM_THREADS: "2"
     env_file:
       - path: .env
         required: false
@@ -156,7 +157,9 @@ services:
   # (ten_vad, numpy, app pkg already baked in). aiohttp/websockets now in
   # requirements.txt too, so a future rebuild drops the pip-install below.
   voice:
-    image: localhost/nova-voice-bot_api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.windows
     # ten_vad needs libc++ (LLVM runtime, not in the slim base). The apt line is
     # dropped once the image is rebuilt from the updated Dockerfile.
     command: >

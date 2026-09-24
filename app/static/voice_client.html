@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Nova Voice — Test Client</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #151b23;
+    --border: #262d38;
+    --text: #e6edf3;
+    --muted: #7d8590;
+    --idle: #7d8590;
+    --listening: #3fb950;
+    --processing: #d29922;
+    --speaking: #58a6ff;
+    --danger: #f85149;
+  }
+  [data-theme="light"] {
+    --bg: #f6f8fa;
+    --panel: #ffffff;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --muted: #6e7781;
+    --idle: #6e7781;
+    --listening: #1a7f37;
+    --processing: #9a6700;
+    --speaking: #0969da;
+    --danger: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    overflow: hidden;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .sticky-header {
+    flex-shrink: 0;
+  }
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 24px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--idle);
+    transition: background 0.15s ease;
+  }
+  .dot.LISTENING { background: var(--listening); box-shadow: 0 0 8px var(--listening); }
+  .dot.PROCESSING { background: var(--processing); box-shadow: 0 0 8px var(--processing); }
+  .dot.SPEAKING { background: var(--speaking); box-shadow: 0 0 8px var(--speaking); }
+  #stateLabel { font-size: 14px; font-weight: 600; }
+  button {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--speaking); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .row { display: flex; gap: 10px; }
+  .log {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+  .log .you { color: var(--speaking); }
+  .log .bot { color: var(--listening); }
+  .log .sys { color: var(--processing); }
+  #transcriptLog {
+    max-height: 260px;
+    overflow-y: auto;
+  }
+  .metric {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .metric:last-child { border-bottom: none; }
+  .metric span:last-child { color: var(--text); }
+
+  /* ---------- Top bar (tabs + theme toggle) ---------- */
+  .topbar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tabbar {
+    display: flex;
+    gap: 6px;
+  }
+  .tab-btn {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 10px 4px;
+    margin-right: 18px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .tab-btn:hover { border-color: transparent; color: var(--text); }
+  .tab-btn.active { color: var(--text); border-bottom-color: var(--speaking); }
+  #themeToggleBtn {
+    margin-bottom: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+  .tab-content-wrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .tab-panel { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  .tab-panel.active { display: flex; }
+ 
+  /* ---------- Chat tab ---------- */
+  #chatScroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 4px 2px;
+  }
+  .bubble-row { display: flex; margin: 8px 0; }
+  .bubble-row.user { justify-content: flex-end; }
+  .bubble-row.bot { justify-content: flex-start; }
+  .bubble {
+    max-width: 72%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 14px;
+    line-height: 1.5;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+  }
+  .bubble.user {
+    background: #0d3321;
+    border: 1px solid #1f5c3a;
+    border-radius: 14px 14px 4px 14px;
+    color: var(--text);
+  }
+  [data-theme="light"] .bubble.user {
+    background: #dafbe1;
+    border: 1px solid #aceebb;
+    color: #1f2328;
+  }
+  .bubble.bot {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px 14px 14px 4px;
+    color: var(--text);
+  }
+  .bubble.typing { color: var(--muted); font-style: italic; }
+  .bubble-sources {
+    margin-top: 8px;
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+  .bubble-sources summary { cursor: pointer; color: var(--speaking); }
+  .bubble-sources .src-item { padding: 3px 0 3px 4px; }
+  .chat-input-row {
+    flex-shrink: 0;
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .chat-input-row input[type="text"] {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-family: inherit;
+    font-size: 13px;
+  }
+  .chat-input-row input[type="text"]:focus { outline: none; border-color: var(--speaking); }
+ 
+  /* ---------- Documents tab ---------- */
+  #docsScroll { flex: 1; min-height: 0; overflow-y: auto; }
+  .upload-drop {
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+  .doc-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .doc-row:last-child { border-bottom: none; }
+  .doc-name { flex: 3; min-width: 0; }
+  .doc-name .n { font-size: 13.5px; color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc-name .c { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .doc-status { flex: 1.3; font-size: 12px; }
+  .doc-status.ready { color: var(--listening); }
+  .doc-status.processing { color: var(--processing); }
+  .doc-status.uploaded { color: var(--speaking); }
+  .doc-status.error { color: var(--danger); }
+  .doc-rename { flex: 1.6; }
+  .doc-rename input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: 12px;
+  }
+  .doc-actions { flex-shrink: 0; display: flex; gap: 6px; }
+  .doc-actions button { padding: 6px 10px; font-size: 12px; }
+  .empty-note { color: var(--muted); font-size: 13px; padding: 20px 0; text-align: center; }
+  .field-error { color: var(--danger); font-size: 12px; margin: 8px 0; }
+  .field-ok { color: var(--listening); font-size: 12px; margin: 8px 0; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="tabbar">
+    <button class="tab-btn active" data-tab="voice" id="tabBtnVoice">🎤 Voice AI</button>
+    <button class="tab-btn" data-tab="chat" id="tabBtnChat">💬 Chat</button>
+    <button class="tab-btn" data-tab="docs" id="tabBtnDocs">📄 Documents</button>
+  </div>
+  <button id="themeToggleBtn" title="Toggle dark/light theme">🌙 Dark</button>
+</div>
+ 
+<div class="tab-content-wrap">
+ 
+<div id="tab-voice" class="tab-panel active">
+ 
+<div class="sticky-header">
+<h1>Nova Voice — Barge-in Test Client</h1>
+ 
+<div class="panel">
+  <div class="status-row">
+    <div class="dot" id="stateDot"></div>
+    <div id="stateLabel">IDLE</div>
+  </div>
+  <div class="row">
+    <button id="connectBtn">Connect + Start Mic</button>
+    <button id="stopBtn" class="danger" disabled>Disconnect</button>
+    <select id="languageSelect" style="background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-family: inherit; font-size: 13px;">
+      <option value="en-IN">English</option>
+      <option value="hi-IN">Hindi</option>
+      <option value="as-IN">Assamese</option>
+      <option value="kn-IN">Kannada</option>
+    </select>
+  </div>
+</div>
+ 
+<div class="panel">
+  <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Live STT Transcript</div>
+  <div id="liveTranscript" style="font-size: 18px; line-height: 1.5; min-height: 28px; color: var(--text);">
+    <span style="color: var(--muted);">— waiting for speech —</span>
+  </div>
+</div>
+</div>
+ 
+</div>
+<!-- /tab-voice -->
+ 
+<div id="tab-chat" class="tab-panel">
+  <div class="sticky-header">
+    <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 16px;">
+      <h1 style="margin-bottom: 0;">Nova Chat</h1>
+      <div class="row" style="gap: 10px;">
+        <button id="chatClearBtn">🗑️ Clear</button>
+        <select id="chatLanguageSelect" style="background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-family: inherit; font-size: 13px;">
+          <option value="English">English</option>
+          <option value="Hindi">Hindi</option>
+          <option value="Assamese">Assamese</option>
+          <option value="Kannada">Kannada</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div id="chatScroll"></div>
+  <div class="chat-input-row">
+    <input type="text" id="chatInput" placeholder="Ask a question in English..." autocomplete="off">
+    <button id="chatSendBtn">Send</button>
+  </div>
+</div>
+ 
+<div id="tab-docs" class="tab-panel">
+  <div class="sticky-header">
+    <h1>Upload Document</h1>
+    <div class="panel">
+      <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px;">Upload PDFs</div>
+      <input type="file" id="docFileInput" accept="application/pdf,.docx,.txt,.md" multiple
+        style="color: var(--text); font-family: inherit; font-size: 12px; margin-bottom: 10px;">
+      <div id="docSelectCaption" style="font-size: 12px; color: var(--muted); margin-bottom: 10px;"></div>
+      <div class="row">
+        <button id="docUploadBtn" disabled>Upload &amp; Ingest</button>
+      </div>
+      <div id="docUploadMsg"></div>
+    </div>
+  </div>
+  <div class="scroll-area">
+    <div class="panel">
+      <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px;">Your Documents</div>
+      <div id="docsScroll">
+        <div class="empty-note">Loading…</div>
+      </div>
+    </div>
+  </div>
+</div>
+ 
+</div>
+<!-- /tab-content-wrap -->
+
+<!-- ---------- Theme toggle ---------- -->
+<!-- Applies saved theme immediately (before other scripts run) so there's
+     no flash of the wrong theme, and persists the choice in localStorage
+     (per-browser only — same as the rest of this test client, no server
+     involvement needed for a display preference). -->
+<script>
+(function initTheme() {
+  const THEME_KEY = "nova_theme";
+  const root = document.documentElement;
+  const btn = document.getElementById("themeToggleBtn");
+
+  function applyTheme(theme) {
+    if (theme === "light") {
+      root.setAttribute("data-theme", "light");
+      btn.textContent = "☀️ Light";
+    } else {
+      root.removeAttribute("data-theme");
+      btn.textContent = "🌙 Dark";
+    }
+  }
+
+  const saved = localStorage.getItem(THEME_KEY) || "dark";
+  applyTheme(saved);
+
+  btn.addEventListener("click", () => {
+    const current = root.getAttribute("data-theme") === "light" ? "light" : "dark";
+    const next = current === "light" ? "dark" : "light";
+    localStorage.setItem(THEME_KEY, next);
+    applyTheme(next);
+  });
+})();
+</script>
+ 
+<script>
+const WS_HOST = window.location.hostname || "localhost";
+const WS_PORT = 8766;
+const WS_URL = `ws://${WS_HOST}:${WS_PORT}`;
+ 
+ 
+const TARGET_SAMPLE_RATE = 16000;
+ 
+let ws = null;
+let audioCtx = null;
+let micStream = null;
+let workletNode = null;
+ 
+// --- Playback queue state (this is the piece that makes barge-in actually work) ---
+let activeSources = [];      // currently scheduled/playing AudioBufferSourceNodes
+let nextStartTime = 0;       // when the next queued chunk should start playing
+ 
+ 
+function log(text, cls) {
+  const el = document.getElementById("transcriptLog");
+  if (!el) return;
+  const line = document.createElement("div");
+  line.className = cls || "";
+  line.textContent = text;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+ 
+function setState(state) {
+  document.getElementById("stateLabel").textContent = state;
+  const dot = document.getElementById("stateDot");
+  dot.className = "dot " + state;
+}
+ 
+// ---------- Playback: Web Audio queue with instant-stop ----------
+ 
+function clearPlaybackQueue() {
+  // Stop everything currently playing or scheduled, and reset the queue.
+  for (const src of activeSources) {
+    try { src.stop(0); } catch (e) { /* already stopped, ignore */ }
+    try { src.disconnect(); } catch (e) {}
+  }
+  activeSources = [];
+  nextStartTime = audioCtx ? audioCtx.currentTime : 0;
+  
+}
+ 
+async function enqueuePlayback(base64Wav, isFinal) {
+  if (!audioCtx) return;
+  const binary = atob(base64Wav);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+ 
+  let audioBuffer;
+  try {
+    audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
+  } catch (e) {
+    log(`[sys] Failed to decode TTS audio chunk: ${e}`, "sys");
+    return;
+  }
+ 
+  const src = audioCtx.createBufferSource();
+  src.buffer = audioBuffer;
+  src.connect(audioCtx.destination);
+ 
+  const startAt = Math.max(audioCtx.currentTime, nextStartTime);
+  src.start(startAt);
+  nextStartTime = startAt + audioBuffer.duration;
+ 
+  activeSources.push(src);
+  src.onended = () => {
+    activeSources = activeSources.filter(s => s !== src);
+    if (isFinal && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "cmd", name: "playback_finished" }));
+    }
+  };
+}
+ 
+// ---------- Mic capture: AudioWorklet resampling to 16kHz mono PCM16 ----------
+ 
+const WORKLET_SOURCE = `
+class PCMResampler extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    this.targetRate = options.processorOptions.targetRate;
+    this.inputRate = sampleRate; // AudioWorkletGlobalScope
+    this.ratio = this.inputRate / this.targetRate;
+    this.acc = [];
+    this.chunkSamples = Math.round(this.targetRate * 0.02); // ~20ms chunks
+  }
+  process(inputs) {
+    const input = inputs[0];
+    if (!input || !input[0]) return true;
+    const channel = input[0];
+ 
+    // Naive downsample by nearest-neighbor decimation.
+    for (let i = 0; i < channel.length; i += this.ratio) {
+      const idx = Math.floor(i);
+      if (idx < channel.length) this.acc.push(channel[idx]);
+    }
+ 
+    while (this.acc.length >= this.chunkSamples) {
+      const chunk = this.acc.splice(0, this.chunkSamples);
+      const pcm16 = new Int16Array(chunk.length);
+      for (let i = 0; i < chunk.length; i++) {
+        let s = Math.max(-1, Math.min(1, chunk[i]));
+        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      this.port.postMessage(pcm16.buffer, [pcm16.buffer]);
+    }
+    return true;
+  }
+}
+registerProcessor("pcm-resampler", PCMResampler);
+`;
+ 
+async function startMic() {
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+  });
+ 
+  audioCtx = new AudioContext();
+  
+ 
+  const blob = new Blob([WORKLET_SOURCE], { type: "application/javascript" });
+  const workletUrl = URL.createObjectURL(blob);
+  await audioCtx.audioWorklet.addModule(workletUrl);
+ 
+  const micSource = audioCtx.createMediaStreamSource(micStream);
+  workletNode = new AudioWorkletNode(audioCtx, "pcm-resampler", {
+    processorOptions: { targetRate: TARGET_SAMPLE_RATE }
+  });
+ 
+  workletNode.port.onmessage = (event) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(event.data); // raw PCM16 ArrayBuffer, binary frame
+    }
+  };
+ 
+  micSource.connect(workletNode);
+  // Not connecting workletNode to destination — we don't want to hear our own mic.
+}
+ 
+function stopMic() {
+  if (workletNode) { workletNode.disconnect(); workletNode = null; }
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+}
+ 
+// ---------- WebSocket wiring ----------
+ 
+async function connect() {
+  document.getElementById("connectBtn").disabled = true;
+ 
+  ws = new WebSocket(WS_URL);
+  ws.binaryType = "arraybuffer";
+ 
+  ws.onopen = async () => {
+    log("[sys] WebSocket connected", "sys");
+    await startMic();
+    ws.send(JSON.stringify({ type: "cmd", name: "start" }));
+    const currentLang = document.getElementById("languageSelect").value;
+    ws.send(JSON.stringify({ type: "cmd", name: "set_language", language: currentLang }));
+    document.getElementById("stopBtn").disabled = false;
+  };
+ 
+  ws.onmessage = (event) => {
+    if (typeof event.data !== "string") return; // audio always comes as base64 JSON here
+    let msg;
+    try { msg = JSON.parse(event.data); } catch (e) { return; }
+ 
+    switch (msg.type) {
+      case "state":
+        setState(msg.state);
+        break;
+      case "cmd":
+        if (msg.name === "stop_playback") {
+          clearPlaybackQueue();
+          bargeInCount += 1;
+          log("[sys] Barge-in: playback stopped", "sys");
+        }
+        break;
+      case "transcript":
+        log(`[you] ${msg.text}`, "you");
+        document.getElementById("liveTranscript").textContent = msg.text;
+        break;
+      case "answer_delta":
+        if (!window.__streamingAnswerText) window.__streamingAnswerText = "";
+        window.__streamingAnswerText += msg.text;
+        {
+          const el = document.getElementById("transcriptLog");
+          if (el) {
+            let liveDiv = document.getElementById("liveAnswerStream");
+            if (!liveDiv) {
+              liveDiv = document.createElement("div");
+              liveDiv.id = "liveAnswerStream";
+              liveDiv.className = "bot";
+              el.appendChild(liveDiv);
+            }
+            const displayText = window.__streamingAnswerText
+              .replace(/\[\s*s\d+(?:\s*,\s*s\d+)*\s*\]/gi, "")
+              .replace(/\[\s*\]/g, "");
+            liveDiv.textContent = `[bot] ${displayText}`;
+            el.scrollTop = el.scrollHeight;
+          }
+        }
+        break;
+      case "answer":
+        {
+          const liveDiv = document.getElementById("liveAnswerStream");
+          if (liveDiv) liveDiv.remove();
+        }
+        window.__streamingAnswerText = "";
+        log(`[bot] ${msg.text}`, "bot");
+        break;
+      case "audio":
+        enqueuePlayback(msg.audio, msg.is_final ===true);
+        break;
+      default:
+        break;
+    }
+  };
+ 
+  ws.onclose = () => {
+    log("[sys] WebSocket disconnected", "sys");
+    setState("IDLE");
+    document.getElementById("connectBtn").disabled = false;
+    document.getElementById("stopBtn").disabled = true;
+  };
+ 
+  ws.onerror = (e) => {
+    log(`[sys] WebSocket error`, "sys");
+  };
+}
+ 
+function disconnect() {
+  stopMic();
+  clearPlaybackQueue();
+  if (ws) { ws.close(); ws = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+}
+ 
+document.getElementById("connectBtn").onclick = connect;
+document.getElementById("stopBtn").onclick = disconnect;
+ 
+document.getElementById("languageSelect").onchange = (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "cmd", name: "set_language", language: e.target.value }));
+    log(`[sys] Language set to: ${e.target.options[e.target.selectedIndex].text}`, "sys");
+  }
+};
+</script>
+ 
+<!-- =====================================================================
+     Tabs + Chat + Documents
+     (kept separate from the voice-ai script above; nothing there is touched)
+===================================================================== -->
+<script>
+(function () {
+ 
+  // ---- EDIT ME: same backend the Streamlit app pointed at ----
+  const API_BASE_URL = (window.NOVA_API_BASE_URL) || "http://localhost:8000";
+  const USER_ID = "550e8400-e29b-41d4-a716-446655440000";
+ 
+  // language name -> header code, mirrors LANGUAGES in the streamlit app
+  const LANGUAGES = {
+    "English": "en-IN",
+    "Hindi": "hi-IN",
+    "Kannada": "kn-IN",
+    "Assamese": "as-IN",
+  };
+ 
+  function headers(extra) {
+    const h = Object.assign({ "X-User-Id": USER_ID }, extra || {});
+    const code = LANGUAGES[chatLang];
+    if (code) h["X-Language"] = code;
+    return h;
+  }
+ 
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s == null ? "" : String(s);
+    return d.innerHTML;
+  }
+ 
+  function cleanAnswer(text) {
+    if (!text) return "";
+    return text
+      .replace(/\[\s*s\d+(?:\s*,\s*s\d+)*\s*\]/gi, "")
+      .replace(/(?<!\w)s\d+(?!\w)/gi, "")
+      .replace(/\[\s*\]/g, "")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\s+([,.!?;:])/g, "$1")
+      .trim();
+  }
+ 
+  // ---------------- Tabs ----------------
+  const tabButtons = {
+    voice: document.getElementById("tabBtnVoice"),
+    chat: document.getElementById("tabBtnChat"),
+    docs: document.getElementById("tabBtnDocs"),
+  };
+  const tabPanels = {
+    voice: document.getElementById("tab-voice"),
+    chat: document.getElementById("tab-chat"),
+    docs: document.getElementById("tab-docs"),
+  };
+  let docsLoadedOnce = false;
+ 
+  function showTab(name) {
+    Object.keys(tabPanels).forEach((k) => {
+      tabPanels[k].classList.toggle("active", k === name);
+      tabButtons[k].classList.toggle("active", k === name);
+    });
+    if (name === "docs") {
+      loadDocs();
+      docsLoadedOnce = true;
+    }
+  }
+  Object.keys(tabButtons).forEach((k) => {
+    tabButtons[k].addEventListener("click", () => showTab(k));
+  });
+ 
+  // ---------------- Chat tab ----------------
+  let chatLang = "English";
+  // per-language conversation store: { [lang]: { messages: [...], conversationId } }
+  const langConvos = {};
+  function convo(lang) {
+    if (!langConvos[lang]) langConvos[lang] = { messages: [], conversationId: null };
+    return langConvos[lang];
+  }
+ 
+  const chatScroll = document.getElementById("chatScroll");
+  const chatInput = document.getElementById("chatInput");
+  const chatSendBtn = document.getElementById("chatSendBtn");
+  const chatClearBtn = document.getElementById("chatClearBtn");
+  const chatLanguageSelect = document.getElementById("chatLanguageSelect");
+ 
+  function renderChat(typing) {
+    const c = convo(chatLang);
+    let html = "";
+    for (const m of c.messages) {
+      if (m.role === "user") {
+        html += `<div class="bubble-row user"><div class="bubble user">${escapeHtml(m.content)}</div></div>`;
+      } else {
+        const text = escapeHtml(m.content);
+        let srcHtml = "";
+        const srcs = m.sources || [];
+        if (srcs.length && /\[S\d+\]/i.test(m.content)) {
+          const items = srcs
+            .map(
+              (s) =>
+                `<div class="src-item">📄 ${escapeHtml(s.document_name || "")} p.${escapeHtml(
+                  s.page_number != null ? s.page_number : "?"
+                )}</div>`
+            )
+            .join("");
+          srcHtml = `<details class="bubble-sources"><summary>📚 ${srcs.length} source(s)</summary>${items}</details>`;
+        }
+        html += `<div class="bubble-row bot"><div class="bubble bot">${text}${srcHtml}</div></div>`;
+      }
+    }
+    if (typing) {
+      html += `<div class="bubble-row bot"><div class="bubble bot typing">Nova is typing…</div></div>`;
+    }
+    chatScroll.innerHTML = html;
+    chatScroll.scrollTop = chatScroll.scrollHeight;
+  }
+ 
+  async function sendChatMessage() {
+    const text = chatInput.value.trim();
+    if (!text) return;
+    const c = convo(chatLang);
+    c.messages.push({ role: "user", content: text });
+    chatInput.value = "";
+    chatSendBtn.disabled = true;
+    renderChat(true);
+    try {
+      const resp = await fetch(`${API_BASE_URL}/api/v1/chat/text`, {
+        method: "POST",
+        headers: Object.assign({ "Content-Type": "application/json" }, headers()),
+        body: JSON.stringify({ message: text, conversation_id: c.conversationId }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        c.conversationId = data.conversation_id != null ? String(data.conversation_id) : null;
+        c.messages.push({
+          role: "assistant",
+          content: cleanAnswer(data.answer || ""),
+          sources: data.sources || [],
+        });
+      } else {
+        const body = await resp.text();
+        c.messages.push({
+          role: "assistant",
+          content: `Request failed (${resp.status})\n${body}`,
+          sources: [],
+        });
+      }
+    } catch (e) {
+      c.messages.push({ role: "assistant", content: `❌ ${e}`, sources: [] });
+    }
+    chatSendBtn.disabled = false;
+    renderChat(false);
+  }
+ 
+  chatSendBtn.addEventListener("click", sendChatMessage);
+  chatInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") sendChatMessage();
+  });
+  chatClearBtn.addEventListener("click", () => {
+    langConvos[chatLang] = { messages: [], conversationId: null };
+    renderChat(false);
+  });
+  chatLanguageSelect.addEventListener("change", (e) => {
+    chatLang = e.target.value;
+    chatInput.placeholder = `Ask a question in ${chatLang}...`;
+    renderChat(false);
+  });
+ 
+  // ---------------- Documents tab ----------------
+  const docFileInput = document.getElementById("docFileInput");
+  const docSelectCaption = document.getElementById("docSelectCaption");
+  const docUploadBtn = document.getElementById("docUploadBtn");
+  const docUploadMsg = document.getElementById("docUploadMsg");
+  const docsScroll = document.getElementById("docsScroll");
+  let docsPollTimer = null;
+ 
+  docFileInput.addEventListener("change", () => {
+    const files = docFileInput.files;
+    if (files && files.length) {
+      const totalBytes = Array.from(files).reduce((a, f) => a + f.size, 0);
+      docSelectCaption.textContent = `${files.length} file(s) selected — ${totalBytes.toLocaleString()} bytes total`;
+      docUploadBtn.disabled = false;
+    } else {
+      docSelectCaption.textContent = "";
+      docUploadBtn.disabled = true;
+    }
+    docUploadMsg.innerHTML = "";
+  });
+ 
+  async function uploadDocs() {
+    const files = Array.from(docFileInput.files || []);
+    if (!files.length) return;
+    docUploadBtn.disabled = true;
+    docUploadMsg.innerHTML = `<div class="field-ok">Uploading ${files.length} file(s)…</div>`;
+    const errors = [];
+    for (const f of files) {
+      try {
+        const fd = new FormData();
+        fd.append("file", f, f.name);
+        const resp = await fetch(`${API_BASE_URL}/api/v1/documents`, {
+          method: "POST",
+          headers: headers(), // do not set Content-Type; browser sets multipart boundary
+          body: fd,
+        });
+        if (!resp.ok) {
+          const body = await resp.text();
+          errors.push(`${f.name}: ${resp.status} ${body}`);
+        }
+      } catch (e) {
+        errors.push(`${f.name}: ${e}`);
+      }
+    }
+    if (errors.length) {
+      docUploadMsg.innerHTML = errors.map((e) => `<div class="field-error">❌ ${escapeHtml(e)}</div>`).join("");
+    } else {
+      docUploadMsg.innerHTML = `<div class="field-ok">✅ ${files.length} file(s) uploaded — ingestion started.</div>`;
+    }
+    docFileInput.value = "";
+    docSelectCaption.textContent = "";
+    docUploadBtn.disabled = true;
+    loadDocs();
+  }
+  docUploadBtn.addEventListener("click", uploadDocs);
+ 
+  const STATUS_LABELS = {
+    ready: ["✅ Ready", "ready"],
+    processing: ["⚙️ Processing", "processing"],
+    uploaded: ["⏳ Queued", "uploaded"],
+    error: ["❌ Error", "error"],
+  };
+ 
+  function renderDocs(docs) {
+    if (!docs.length) {
+      docsScroll.innerHTML = `<div class="empty-note">No documents uploaded yet.</div>`;
+      return;
+    }
+    docsScroll.innerHTML = docs
+      .map((doc) => {
+        const sizeKb = Math.floor((doc.file_size_bytes || 0) / 1024);
+        const pages = doc.page_count;
+        const detail = pages ? `${pages} pages · ${sizeKb.toLocaleString()} KB` : `${sizeKb.toLocaleString()} KB`;
+        const [label, cls] = STATUS_LABELS[doc.status] || [doc.status, ""];
+        return `
+        <div class="doc-row" data-id="${escapeHtml(doc.id)}">
+          <div class="doc-name">
+            <div class="n">${escapeHtml(doc.display_name)}</div>
+            <div class="c">${escapeHtml(detail)}</div>
+          </div>
+          <div class="doc-status ${cls}">${label}</div>
+          <div class="doc-rename">
+            <input type="text" class="doc-rename-input" value="${escapeHtml(doc.display_name)}">
+          </div>
+          <div class="doc-actions">
+            <button class="doc-save-btn">Save</button>
+            <button class="doc-del-btn danger" title="Delete">🗑️</button>
+          </div>
+        </div>`;
+      })
+      .join("");
+ 
+    docsScroll.querySelectorAll(".doc-row").forEach((row) => {
+      const id = row.getAttribute("data-id");
+      const nameInput = row.querySelector(".doc-rename-input");
+      row.querySelector(".doc-save-btn").addEventListener("click", async () => {
+        const newName = nameInput.value.trim();
+        if (!newName) return;
+        try {
+          const resp = await fetch(`${API_BASE_URL}/api/v1/documents/${id}`, {
+            method: "PATCH",
+            headers: Object.assign({ "Content-Type": "application/json" }, headers()),
+            body: JSON.stringify({ name: newName }),
+          });
+          if (resp.ok) loadDocs();
+          else docUploadMsg.innerHTML = `<div class="field-error">Rename failed (${resp.status})</div>`;
+        } catch (e) {
+          docUploadMsg.innerHTML = `<div class="field-error">Rename failed: ${escapeHtml(String(e))}</div>`;
+        }
+      });
+      row.querySelector(".doc-del-btn").addEventListener("click", async () => {
+        try {
+          const resp = await fetch(`${API_BASE_URL}/api/v1/documents/${id}`, {
+            method: "DELETE",
+            headers: headers(),
+          });
+          if (resp.ok) loadDocs();
+          else docUploadMsg.innerHTML = `<div class="field-error">Delete failed (${resp.status})</div>`;
+        } catch (e) {
+          docUploadMsg.innerHTML = `<div class="field-error">Delete failed: ${escapeHtml(String(e))}</div>`;
+        }
+      });
+    });
+  }
+ 
+  async function loadDocs() {
+    if (docsPollTimer) { clearTimeout(docsPollTimer); docsPollTimer = null; }
+    try {
+      const resp = await fetch(`${API_BASE_URL}/api/v1/documents?limit=50`, { headers: headers() });
+      if (resp.ok) {
+        const data = await resp.json();
+        const docs = data.items || [];
+        renderDocs(docs);
+        if (docs.some((d) => d.status === "uploaded" || d.status === "processing")) {
+          docsPollTimer = setTimeout(loadDocs, 3000);
+        }
+      } else {
+        docsScroll.innerHTML = `<div class="field-error">Could not load documents (${resp.status})</div>`;
+      }
+    } catch (e) {
+      docsScroll.innerHTML = `<div class="field-error">❌ ${escapeHtml(String(e))}</div>`;
+    }
+  }
+ 
+  renderChat(false);
+})();
+</script>
+
+<!-- ---------- Admin-curated language menu ---------- -->
+<!-- The admin (via /admin) picks which languages users may choose from.
+     On load, both dropdowns here are trimmed down to only that set — users
+     can freely pick among the admin-allowed options, but cannot select
+     anything outside it (the option simply won't exist in the list). The
+     backend independently re-validates every request against the same
+     admin-allowed list, so this is a UI convenience, not the real
+     enforcement boundary. -->
+<script>
+(async function applyAllowedLanguages() {
+  const API_BASE_URL = (window.NOVA_API_BASE_URL) || "http://localhost:8000";
+
+  // Maps the short code from the admin API to each dropdown's own value format.
+  const TO_VOICE_SELECT = { as: "as-IN", en: "en-IN", hi: "hi-IN", kn: "kn-IN", bn: "bn-IN" };
+  const TO_CHAT_SELECT = { as: "Assamese", en: "English", hi: "Hindi", kn: "Kannada", bn: "Bengali" };
+
+  function trimOptions(select, keepValues) {
+    if (!select) return;
+    const keepSet = new Set(keepValues.filter(Boolean));
+    let sawSelected = false;
+    Array.from(select.options).forEach((opt) => {
+      const keep = keepSet.has(opt.value);
+      opt.hidden = !keep;
+      opt.disabled = !keep;
+      if (keep && opt.value === select.value) sawSelected = true;
+    });
+    // If the dropdown's current selection is no longer allowed, jump to
+    // the first still-allowed option so the UI never sits on a stale pick.
+    if (!sawSelected) {
+      const firstAllowed = Array.from(select.options).find((o) => !o.disabled);
+      if (firstAllowed) {
+        select.value = firstAllowed.value;
+        select.dispatchEvent(new Event("change"));
+      }
+    }
+  }
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/v1/admin/languages`);
+    const data = await res.json();
+    const allowed = data.allowed_languages || []; // e.g. ["as", "hi"]
+
+    trimOptions(
+      document.getElementById("languageSelect"),
+      allowed.map((c) => TO_VOICE_SELECT[c])
+    );
+    trimOptions(
+      document.getElementById("chatLanguageSelect"),
+      allowed.map((c) => TO_CHAT_SELECT[c])
+    );
+  } catch (e) {
+    // If the admin endpoint is unreachable, leave the dropdowns as-is
+    // (full list, unfiltered) — the backend still enforces on every
+    // request regardless of what the UI shows.
+    console.warn("Could not load admin-allowed languages:", e);
+  }
+})();
+</script>
+
+</body>
+</html>

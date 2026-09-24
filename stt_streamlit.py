@@ -2,7 +2,6 @@ import io
 import os
 import re
 import time
-import uuid
 import base64
 import requests
 import streamlit as st
@@ -30,14 +29,7 @@ def clean_answer(text):
     return text.strip()
 
 
-if "user_id" not in st.session_state:
-    _id_file = os.path.join(os.path.dirname(__file__), ".ui_user_id")
-    try:
-        st.session_state.user_id = open(_id_file).read().strip()
-    except FileNotFoundError:
-        _uid = str(uuid.uuid4())
-        open(_id_file, "w").write(_uid)
-        st.session_state.user_id = _uid
+
 # Per-language conversation storage: {lang: {messages, conversation_id}}
 if "lang_convos" not in st.session_state:
     st.session_state.lang_convos = {}
@@ -76,11 +68,15 @@ def _convo(lang: str) -> dict:
 
 def get_headers():
     lang_code = LANGUAGES[st.session_state.selected_language]
-    headers = {"X-User-Id": st.session_state.user_id}
+
+    headers = {
+        "X-User-Id": "550e8400-e29b-41d4-a716-446655440000"
+    }
+
     if lang_code:
         headers["X-Language"] = lang_code
-    return headers
 
+    return headers
 
 page = st.session_state.page
 

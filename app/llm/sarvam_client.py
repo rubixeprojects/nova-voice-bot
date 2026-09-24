@@ -144,7 +144,6 @@ def sarvam_vision_ocr(
     page_number: int,
     db=None,
     document_id: uuid.UUID | None = None,
-    request_id: str | uuid.UUID | None = None,
 ) -> tuple[str, float]:
     """OCR a single page image via Sarvam's document-intelligence endpoint.
 
@@ -173,7 +172,7 @@ def sarvam_vision_ocr(
             if db is not None:
                 record_stage_sync(
                     db, "ocr", status="success", component="sarvam_vision",
-                    duration_ms=dur, document_id=document_id, request_id=request_id,
+                    duration_ms=dur, document_id=document_id, request_id=None,
                     input_summary={"page": page_number, "attempt": attempt},
                     output_summary=_summary(text),
                 )
@@ -185,7 +184,7 @@ def sarvam_vision_ocr(
             if db is not None:
                 record_stage_sync(
                     db, "ocr", status="failed", component="sarvam_vision",
-                    duration_ms=dur, document_id=document_id, request_id=request_id,
+                    duration_ms=dur, document_id=document_id, request_id=None,
                     input_summary={"page": page_number, "attempt": attempt},
                     error_message=detail,
                 )
@@ -207,15 +206,15 @@ async def transcribe(
     content_type: str = "audio/wav",
     db=None,
     conversation_id: uuid.UUID | None = None,
-    request_id: str | uuid.UUID | None = None,
+    language_code: str = "unknown",
 ) -> dict:
     """Transcribe multilingual audio using Sarvam Saaras v3.
 
-    Uses automatic language detection so the same endpoint can handle
-    English, Hindi, Kannada, Assamese, etc.
+    Pass a specific language_code (e.g. "hi-IN") when the caller already
+    knows the language, for better accuracy than auto-detection. Defaults
+    to "unknown" (auto-detect) for backward compatibility.
     """
     url = settings.sarvam_base_url.rstrip("/") + "/speech-to-text"
-
     last_err: Exception | None = None
 
     for attempt in range(1, _MAX_ATTEMPTS + 1):
@@ -236,7 +235,7 @@ async def transcribe(
                     data={
                         "model": settings.sarvam_stt_model,
                         "mode": "transcribe",
-                        "language_code": "unknown",
+                        "language_code": language_code,
                     },
                 )
 
@@ -265,7 +264,7 @@ async def transcribe(
                     component="saaras_v3",
                     duration_ms=dur,
                     conversation_id=conversation_id,
-                    request_id=request_id,
+                    request_id=None,
                     input_summary={
                         "audio_bytes": len(audio_bytes),
                         "attempt": attempt,
@@ -300,7 +299,7 @@ async def transcribe(
                     component="saaras_v3",
                     duration_ms=dur,
                     conversation_id=conversation_id,
-                    request_id=request_id,
+                    request_id=None,
                     input_summary={
                         "audio_bytes": len(audio_bytes),
                         "attempt": attempt,
@@ -341,8 +340,9 @@ async def text_to_speech(
 
     supported_languages = {
         "en-IN",
+        "hi-IN",
         "kn-IN",
-
+        "as-IN",
     }
 
     if language_code not in supported_languages:
@@ -385,7 +385,6 @@ async def route_query(
     query: str,
     *,
     db=None,
-    request_id: str | uuid.UUID | None = None,
 ) -> str:
     """
     Decide whether the user's query needs document retrieval.
@@ -419,7 +418,7 @@ async def route_query(
     result = await chat_completion(
         router_messages,
         db=db,
-        request_id=request_id,
+        
     )
 
     result = result.strip().lower()
@@ -443,7 +442,6 @@ async def chat_completion(
     *,
     db=None,
     conversation_id: uuid.UUID | None = None,
-    request_id: str | uuid.UUID | None = None,
     temperature: float = 0.2,
     max_tokens: int = 1024,
 ) -> str:
@@ -472,7 +470,7 @@ async def chat_completion(
                 await record_stage_async(
                     db, "llm_generation", status="success", component="sarvam_30b",
                     duration_ms=dur, conversation_id=conversation_id,
-                    request_id=request_id,
+                    request_id=None,
                     input_summary={"messages": len(messages), "attempt": attempt},
                     output_summary=_summary(answer),
                 )
@@ -492,7 +490,7 @@ async def chat_completion(
                 await record_stage_async(
                     db, "llm_generation", status="failed", component="sarvam_30b",
                     duration_ms=dur, conversation_id=conversation_id,
-                    request_id=request_id,
+                    request_id=None,
                     input_summary={"messages": len(messages), "attempt": attempt},
                     error_message=detail,
                 )
@@ -511,7 +509,6 @@ async def chat_completion_stream(
     *,
     db=None,
     conversation_id: uuid.UUID | None = None,
-    request_id: str | uuid.UUID | None = None,
     temperature: float = 0.2,
     max_tokens: int = 1024,
 ) -> AsyncIterator[str]:
@@ -557,7 +554,7 @@ async def chat_completion_stream(
             await record_stage_async(
                 db, "llm_generation", status="success", component="sarvam_30b",
                 duration_ms=dur, conversation_id=conversation_id,
-                request_id=request_id,
+                request_id=None,
                 input_summary={"messages": len(messages), "stream": True},
                 output_summary={"chars": produced},
             )
@@ -567,7 +564,7 @@ async def chat_completion_stream(
             await record_stage_async(
                 db, "llm_generation", status="failed", component="sarvam_30b",
                 duration_ms=dur, conversation_id=conversation_id,
-                request_id=request_id,
+                request_id=None,
                 input_summary={"messages": len(messages), "stream": True},
                 error_message=_err_detail(exc),
             )

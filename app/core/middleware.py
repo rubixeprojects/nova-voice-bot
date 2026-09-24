@@ -15,7 +15,7 @@ import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-
+from app.core.config import settings
 from app.core.context import set_request_id, set_user_id
 from app.core.db import AsyncSessionLocal
 from app.core.logging import get_logger
@@ -44,30 +44,11 @@ def _is_public(path: str) -> bool:
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        request_id = set_request_id(request.headers.get("X-Request-Id"))
+        request_id = set_request_id(None)
 
-        user_id = request.headers.get("X-User-Id")
         path = request.url.path
 
-        if not _is_public(path):
-            if not user_id:
-                set_user_id(None)
-                log.warning("auth.missing_user_id", path=path)
-                return JSONResponse(
-                    status_code=401,
-                    content={"detail": "Missing required header: X-User-Id"},
-                    headers={"X-Request-Id": request_id},
-                )
-            # Require a well-formed UUID (upstream contract), but do not "verify".
-            try:
-                uuid.UUID(user_id)
-            except ValueError:
-                return JSONResponse(
-                    status_code=401,
-                    content={"detail": "X-User-Id must be a UUID"},
-                    headers={"X-Request-Id": request_id},
-                )
-
+        user_id = str(settings.universal_user_id)
         set_user_id(user_id)
         request.state.request_id = request_id
         request.state.user_id = user_id
@@ -90,7 +71,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             latency_ms = int((time.perf_counter() - started) * 1000)
             response.headers["X-Request-Id"] = request_id
             await self._log_request(
-                request_id=request_id,
+                request_id=None,
                 user_id=user_id,
                 method=request.method,
                 path=path,

@@ -11,7 +11,7 @@ import threading
 from typing import Any
 
 import httpx
-
+import os
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.retrieval.types import RetrievedChunk
@@ -22,7 +22,7 @@ _lock = threading.Lock()
 _reranker = None
 
 _HF_INFERENCE_BASE = "https://router.huggingface.co/hf-inference"
-
+_HF_RERANK_TIMEOUT_SECONDS = float(os.environ.get("HF_RERANK_TIMEOUT_SECONDS", "18"))
 
 def _is_endpoint() -> bool:
     return settings.bge_reranker_model_path_or_endpoint.startswith("http")
@@ -109,7 +109,7 @@ def _scores_hf(query: str, texts: list[str]) -> list[float]:
 
     for attempt in range(10):
         try:
-            resp = session.post(url, headers=headers, json=payload, timeout=120)
+            resp = session.post(url, headers=headers, json=payload, timeout=_HF_RERANK_TIMEOUT_SECONDS)
             hf_raise_for_status(resp)
             return _parse_hf_scores(resp.json(), len(texts))
         except HfHubHTTPError as exc:
@@ -130,9 +130,15 @@ def _scores_hf(query: str, texts: list[str]) -> list[float]:
 
 
 def _scores_local(query: str, texts: list[str]) -> list[float]:
+    import time
+    t0 = time.perf_counter()
     model = _load()
+    t1 = time.perf_counter()
+    log.info("reranker.local_load_time", seconds=round(t1 - t0, 2))
     pairs = [[query, t] for t in texts]
     raw = model.predict(pairs, show_progress_bar=False)
+    t2 = time.perf_counter()
+    log.info("reranker.local_predict_time", seconds=round(t2 - t1, 2), n_pairs=len(pairs))
     if hasattr(raw, "tolist"):
         raw = raw.tolist()
     if isinstance(raw, float):
